@@ -1,0 +1,8 @@
+{
+  "method": "tfidf_logreg",
+  "val_roc_auc": 0.9065432098765432,
+  "val_pr_auc": 0.633160210341933,
+  "test_roc_auc": 0.8767901234567902,
+  "test_pr_auc": 0.6516439247677377,
+  "test_f1_harmful": 0.5891472868217055
+}

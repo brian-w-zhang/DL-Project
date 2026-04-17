@@ -1,14 +1,58 @@
+# Environment & secrets
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-.DS_Store
-.idea
-.vscode
-.history
-.cursorrules
-.cursorignore
 
-# Local datasets
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.history/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local / large data (raw + processed splits)
 data/
+
+# Frozen activations (large .pt tensors; keep extraction_config.json etc.)
+features/**/*.pt
+
+# Trained probes (regenerate with train_probe.py)
+outputs/checkpoints/*.pt
+
+# LaTeX build outputs (keep report.tex)
+report/*.aux
+report/*.bbl
+report/*.blg
+report/*.fdb_latexmk
+report/*.fls
+report/*.log
+report/*.out
+report/*.toc
+report/*.synctex.gz
+report/*.lof
+report/*.lot
+
+# LaTeX sometimes drops these in the working dir
+mfput.log
+missfont.log

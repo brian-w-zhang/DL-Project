@@ -1,0 +1,20 @@
+{
+  "model_slug": "qwen2.5-1.5b",
+  "layer": 14,
+  "probe_type": "linear",
+  "best_epoch": 11,
+  "val_roc_auc": 0.8999382716049382,
+  "val_pr_auc": 0.6831852121886479,
+  "test_roc_auc": 0.9063888888888889,
+  "test_pr_auc": 0.7399095846450633,
+  "best_threshold": 0.8300000000000002,
+  "test_f1_harmful_at_best_thresh": 0.6722689075630253,
+  "hyperparams": {
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "pos_weight": 3.0,
+    "batch_size": 64,
+    "seed": 42,
+    "harmful_frac": 0.33
+  }
+}

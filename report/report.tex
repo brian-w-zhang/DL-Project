@@ -1,0 +1,707 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=2.5cm]{geometry}
+\setlength{\headheight}{14pt}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{listings}
+
+\hypersetup{
+  colorlinks=true, linkcolor=blue!70!black,
+  citecolor=blue!70!black, urlcolor=blue!70!black
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!8}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{50.039 Deep Learning, Y2026}
+\lhead{Activation-Based Jailbreak Anomaly Detection}
+\rfoot{\thepage}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{
+  \vspace{-1em}
+  \LARGE\textbf{Activation-Based Jailbreak Anomaly Detection} \\[0.4em]
+  \large Detecting Harmful Prompts via Frozen LLM Internal Representations \\[0.4em]
+  \normalsize 50.039 Deep Learning: Project Report, Y2026
+}
+\author{%
+  Sabrina Wang (1011177) \and
+  Brian Zhang (1011197) \and
+  Albert Tran (1011204)}
+\date{}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\begin{abstract}
+We investigate whether internal activations from a frozen large language model (LLM)
+carry sufficient signal to detect harmful and jailbreak prompts as anomalies, without
+any fine-tuning. Using \texttt{Qwen2.5-1.5B} as a frozen feature extractor, we extract
+hidden-state vectors at three transformer depths and train lightweight linear probes
+on an imbalanced dataset (90\% normal, 10\% harmful) derived from WildGuardMix.
+Our best model achieves a test ROC-AUC of \textbf{0.922} and PR-AUC of \textbf{0.770},
+outperforming a TF-IDF + Logistic Regression text baseline (ROC-AUC 0.877, PR-AUC 0.652).
+A layer sweep reveals that safety signal peaks at mid-network depth (layer 14)
+and slightly degrades in later layers, a finding consistent with the hypothesis
+that mid-layers encode rich semantic content while late layers shift toward
+next-token prediction. We also compare a one-class Mahalanobis anomaly detector
+(trained on benign samples only) and conduct ablations over probe architecture
+and training set balance. Failure cases and limitations are documented.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+
+Modern LLM deployments face a persistent threat: \emph{jailbreak attacks}, adversarially
+crafted prompts designed to bypass safety filters and elicit harmful outputs. Existing
+defences fall into three broad categories:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{Prompt-level detectors}: classify raw input text using keyword lists
+        or fine-tuned classifiers.
+  \item \textbf{Output-level detectors}: inspect the generated response for harmful content.
+  \item \textbf{Activation-level detectors}: examine the model's internal hidden states
+        during the forward pass.
+\end{enumerate}
+
+This project focuses on the third, less-explored category. The core hypothesis is that
+\emph{a frozen LLM implicitly encodes semantic safety features in its hidden states},
+and that a lightweight probe trained on these representations can reliably separate
+benign from harmful prompts, without ever generating text.
+
+This framing maps naturally onto \textbf{anomaly detection under class imbalance}:
+harmful/jailbreak prompts are rare (anomalies) in real-world traffic, while benign
+queries form the overwhelming majority. We deliberately construct an imbalanced dataset
+(90:10) to reflect this and evaluate using metrics appropriate for imbalanced settings
+(ROC-AUC, PR-AUC).
+
+The main contributions of this project are:
+\begin{itemize}[noitemsep]
+  \item A reproducible pipeline for extraction, training, and evaluation of activation probes.
+  \item An empirical layer-sweep showing where safety signal emerges in a 1.5B-parameter transformer.
+  \item Comparison of supervised probe, text baseline, and one-class anomaly detection.
+  \item Honest documentation of failure modes and calibration limitations.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Related Work}
+
+\paragraph{Activation probing for safety.}
+Zou et al.\ (Representation Engineering, 2023) demonstrated that safety-relevant
+concepts can be linearly decoded from LLM hidden states. More directly related,
+\citet{jailbreak_trace} propose a tensor-based latent framework for detecting jailbreaks
+from internal representations without model fine-tuning. \citet{hiddendetect} extend
+this idea to vision-language models by monitoring hidden states at inference time.
+\citet{obfuscated} show that while linear probes successfully flag standard jailbreaks,
+they can be bypassed by obfuscation attacks, a limitation we acknowledge in
+Section~\ref{sec:limitations}.
+
+\paragraph{Safety datasets and benchmarks.}
+AdvBench \citep{advbench} and JailbreakBench \citep{jailbreakbench} are standard
+collections of curated harmful behaviour prompts. We use WildGuardMix \citep{wildguard},
+a larger and more realistic dataset covering both adversarial and non-adversarial harmful
+prompts drawn from real user interactions, which better matches our anomaly detection framing.
+
+\paragraph{Anomaly detection for NLP.}
+Mahalanobis-distance-based OOD detection \citep{mahalanobis_ood} applied to LLM
+representations provides a natural one-class baseline. Our one-class experiment
+(Section~\ref{sec:oneclass}) directly implements this approach.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Dataset}
+\label{sec:dataset}
+
+\subsection{Source: WildGuardMix}
+
+We use \textbf{WildGuardMix} \citep{wildguard} (\texttt{allenai/wildguardmix} on
+Hugging Face), a large-scale prompt safety dataset containing 86{,}759 training
+examples across 13 harm categories. Each prompt is labelled with:
+
+\begin{itemize}[noitemsep]
+  \item \texttt{prompt\_harm\_label}: \texttt{harmful} or \texttt{unharmful}
+  \item \texttt{adversarial}: boolean flag indicating jailbreak-style framing
+  \item \texttt{subcategory}: fine-grained harm category (violence, misinformation, etc.)
+\end{itemize}
+
+Crucially, the \emph{harmful} class includes both direct harmful requests (e.g.,
+``How do I make explosives?'') and adversarial jailbreaks (e.g., roleplay-wrapped
+or instruction-overriding prompts). This distinction matters for interpreting
+failure cases (Section~\ref{sec:failures}).
+
+\subsection{Imbalanced Split Construction}
+
+We map \texttt{harmful} $\to$ label 1 (anomaly) and \texttt{unharmful} $\to$ label 0 (normal),
+then construct imbalanced splits at a 90:10 ratio to simulate real-world deployment conditions.
+
+\begin{table}[H]
+\centering
+\caption{Dataset splits. All splits maintain the 90:10 normal:harmful ratio.}
+\label{tab:splits}
+\begin{tabular}{lccc}
+\toprule
+Split & Normal (0) & Harmful (1) & Total \\
+\midrule
+Train & 2{,}700 & 300 & 3{,}000 \\
+Val   & 540     & 60  & 600 \\
+Test  & 540     & 60  & 600 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Splits were constructed using disjoint random sampling with seed 42, saved as CSV
+and Parquet files under \texttt{data/processed/wildguardmix\_imbalance/}.
+Figure~\ref{fig:eda_class} confirms the intended distribution across splits.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{../outputs/figures/eda_class_distribution.png}
+  \caption{Class distribution across train, val, and test splits. The 10\% harmful
+           minority class is consistent across all splits.}
+  \label{fig:eda_class}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[t]{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../outputs/figures/eda_prompt_length.png}
+    \caption{Prompt length distributions by class. Harmful prompts are slightly longer on average (median 39.5 vs 42 words), with higher variance.}
+    \label{fig:eda_len}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \includegraphics[width=\linewidth]{../outputs/figures/eda_adversarial_breakdown.png}
+    \caption{Breakdown of harmful prompts by adversarial flag. A significant portion are adversarial (jailbreak-style), motivating representation-level rather than keyword-level detection.}
+    \label{fig:eda_adv}
+  \end{subfigure}
+  \caption{Exploratory data analysis on the training split.}
+\end{figure}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Method}
+\label{sec:method}
+
+\subsection{Frozen LLM Feature Extraction}
+
+We use \textbf{Qwen2.5-1.5B} (\texttt{Qwen/Qwen2.5-1.5B}) as a frozen feature
+extractor. This model has 28 transformer layers and a hidden dimension of 1536.
+All model parameters are frozen (\texttt{requires\_grad=False}) throughout; no
+fine-tuning is performed.
+
+For each prompt, we:
+\begin{enumerate}[noitemsep]
+  \item Tokenise with \texttt{max\_length=256}, truncating longer prompts.
+  \item Run a single forward pass with \texttt{output\_hidden\_states=True}.
+  \item Extract the hidden state at a target layer $\ell \in \{4, 14, 26\}$.
+  \item Pool across the sequence dimension using \textbf{last-token pooling}:
+        select the hidden vector at the position of the last non-padding token.
+\end{enumerate}
+
+This yields a feature vector $\mathbf{x} \in \mathbb{R}^{1536}$ per prompt per layer.
+Features are extracted in batches of 16 on Apple MPS (Apple Silicon GPU) and saved
+as \texttt{.pt} tensors, decoupling extraction from probe training.
+
+We select three representative layers:
+\begin{itemize}[noitemsep]
+  \item \textbf{Layer 4} (early): low-level syntactic/lexical features.
+  \item \textbf{Layer 14} (mid): hypothesised to encode rich semantic content.
+  \item \textbf{Layer 26} (late): close to the output; may encode generation-oriented features.
+\end{itemize}
+
+\subsection{Probe Architecture}
+\label{sec:probe}
+
+Features are \textbf{z-score normalised} using training-set statistics before training.
+We train two probe variants:
+
+\paragraph{Linear probe.}
+\begin{equation}
+  \hat{y} = \sigma\!\left(\mathbf{w}^\top \hat{\mathbf{x}} + b\right), \quad
+  \hat{\mathbf{x}} = \frac{\mathbf{x} - \boldsymbol{\mu}}{\boldsymbol{\sigma}}
+\end{equation}
+where $\mathbf{w} \in \mathbb{R}^{1536}$, $b \in \mathbb{R}$, and $\sigma$ is the
+sigmoid function. Implemented as \texttt{nn.Linear(1536, 1)} in PyTorch.
+
+\paragraph{MLP probe.}
+A two-layer network: $\text{Linear}(1536, 256) \to \text{ReLU} \to \text{Dropout}(0.3) \to \text{Linear}(256, 1)$.
+
+\paragraph{Loss function.}
+Both probes are trained with \textbf{weighted binary cross-entropy}:
+\begin{equation}
+  \mathcal{L} = -\frac{1}{N}\sum_{i=1}^{N}
+    \left[ w_+ y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i) \right]
+\end{equation}
+where $w_+ = 3.0$ upweights the harmful minority class. Optimiser: AdamW,
+$\text{lr}=10^{-3}$, $\lambda=10^{-4}$. Early stopping on validation PR-AUC
+with patience 7.
+
+\paragraph{Threshold selection.}
+Due to class imbalance and the $w_+$ term shifting probability calibration, we
+select the classification threshold by sweeping $t \in [0.05, 0.95]$ on the
+validation set and choosing the value that maximises F1 for the harmful class.
+This threshold is saved with the model checkpoint and applied to the test set
+exactly once.
+
+\subsection{Text Baseline}
+
+A TF-IDF (max 10{,}000 features, bigrams, sublinear TF scaling) + Logistic
+Regression (\texttt{class\_weight=`balanced'}) classifier trained directly on
+raw prompt text. This is a strong, interpretable baseline that uses no deep
+features. Implemented in \texttt{scikit-learn}; metrics are directly comparable
+to the activation probes.
+
+\subsection{One-Class Anomaly Detection}
+\label{sec:oneclass_method}
+
+To investigate a stricter anomaly detection framing where no harmful labels
+are available during training, we fit an \textbf{Empirical Covariance} model
+on the benign training activation vectors and use the \textbf{Mahalanobis distance}
+as an anomaly score at test time:
+\begin{equation}
+  s(\mathbf{x}) = \sqrt{(\mathbf{x} - \hat{\boldsymbol{\mu}})^\top \hat{\boldsymbol{\Sigma}}^{-1}
+  (\mathbf{x} - \hat{\boldsymbol{\mu}})}
+\end{equation}
+A prompt is flagged as harmful if $s(\mathbf{x})$ exceeds the 95th percentile of
+benign training distances. This method requires \emph{zero harmful examples} at
+training time.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Experimental Setup}
+\label{sec:setup}
+
+\begin{table}[H]
+\centering
+\caption{Hyperparameters for probe training.}
+\label{tab:hyperparams}
+\begin{tabular}{ll}
+\toprule
+Parameter & Value \\
+\midrule
+Optimiser & AdamW \\
+Learning rate & $10^{-3}$ \\
+Weight decay & $10^{-4}$ \\
+Batch size & 64 \\
+Max epochs & 50 \\
+Early stopping patience & 7 (on val PR-AUC) \\
+Positive class weight ($w_+$) & 3.0 \\
+Feature normalisation & Z-score (train statistics) \\
+Random seed & 42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Metrics.} For imbalanced anomaly detection, threshold-independent
+metrics are primary:
+\begin{itemize}[noitemsep]
+  \item \textbf{ROC-AUC}: probability that a randomly drawn harmful prompt is
+        ranked higher than a benign one.
+  \item \textbf{PR-AUC} (Average Precision): area under the precision-recall
+        curve; more informative than ROC-AUC under heavy imbalance.
+  \item \textbf{F1 (harmful class)}: harmonic mean of precision and recall at
+        the optimal threshold; threshold-dependent but practically useful.
+\end{itemize}
+
+\paragraph{Hardware.} Feature extraction ran on Apple MPS (M-series chip) in
+approximately 25 minutes. Probe training runs on CPU in under 1 minute per configuration.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Results}
+\label{sec:results}
+
+\subsection{Main Results Table}
+
+\begin{table}[H]
+\centering
+\caption{Test set performance of all methods. Best value in each column is \textbf{bold}.
+         F1 is computed at the optimal threshold selected on the validation set.
+         $\dagger$ One-class detector is trained on benign samples only.}
+\label{tab:main_results}
+\begin{tabular}{lccc}
+\toprule
+Method & ROC-AUC & PR-AUC & F1 (harmful) \\
+\midrule
+TF-IDF + LogReg (text baseline) & 0.877 & 0.652 & 0.589 \\
+\midrule
+Activation probe, Layer 4  (early), Linear  & 0.844 & 0.665 & 0.607 \\
+Activation probe, Layer 14 (mid),   Linear  & \textbf{0.922} & \textbf{0.770} & 0.660 \\
+Activation probe, Layer 14 (mid),   MLP     & 0.912 & 0.728 & 0.636 \\
+Activation probe, Layer 26 (late),  Linear  & 0.892 & 0.740 & \textbf{0.672} \\
+\midrule
+One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & 0.263 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The activation probe at layer 14 outperforms the TF-IDF baseline on both
+ROC-AUC ($+0.045$) and PR-AUC ($+0.118$), confirming that internal
+representations carry richer safety signal than surface text patterns.
+
+\subsection{Layer Sweep}
+\label{sec:layer_sweep}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\linewidth]{../outputs/figures/layer_sweep_linear.png}
+  \caption{ROC-AUC and PR-AUC of the linear probe across three transformer layers.
+           Safety signal peaks at layer 14 (mid-network) and does not increase
+           monotonically toward the output.}
+  \label{fig:layer_sweep}
+\end{figure}
+
+Figure~\ref{fig:layer_sweep} reveals a non-monotonic relationship between layer
+depth and probe performance. Safety signal is weak in early layers (layer 4),
+peaks at the mid-network (layer 14), and slightly degrades in late layers
+(layer 26). We hypothesise that:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Early layers} encode predominantly syntactic/lexical features
+        with limited semantic discrimination.
+  \item \textbf{Mid layers} build rich contextual semantic representations,
+        including intent-related features.
+  \item \textbf{Late layers} are increasingly oriented toward next-token
+        prediction, diluting semantic safety signal.
+\end{itemize}
+
+This finding is consistent with prior work on probing LLM representations
+\citep{jailbreak_trace}, which also reports peak safety discrimination at
+intermediate depths.
+
+\subsection{ROC and Precision-Recall Curves}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.90\linewidth]{../outputs/figures/roc_pr_layer14_linear.png}
+  \caption{ROC (left) and Precision-Recall (right) curves for the best activation
+           probe (layer 14, linear) versus the TF-IDF text baseline. The activation
+           probe dominates on both curves.}
+  \label{fig:roc_pr}
+\end{figure}
+
+Figure~\ref{fig:roc_pr} shows the activation probe dominating the TF-IDF baseline
+across the full operating range on both curves. The PR-AUC advantage ($+0.118$)
+is especially meaningful: under 10\% class prevalence, PR-AUC is a more
+discriminating metric than ROC-AUC.
+
+\subsection{Confusion Matrix}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.40\linewidth]{../outputs/figures/confusion_layer14_linear.png}
+  \caption{Confusion matrix for the layer 14 linear probe at the optimal threshold
+           (0.82), selected on the validation set to maximise F1(harmful).}
+  \label{fig:confusion}
+\end{figure}
+
+At threshold 0.82, the probe achieves strong recall on the harmful class
+while maintaining manageable false alarm rates. The high threshold (0.82 vs.\ the
+standard 0.50) is a calibration artefact of training with $w_+ = 3.0$
+(Section~\ref{sec:calibration}).
+
+\subsection{Linear vs.\ MLP Ablation}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.60\linewidth]{../outputs/figures/roc_linear_vs_mlp.png}
+  \caption{ROC curves for linear and MLP probes at layer 14. The linear probe
+           achieves higher AUC, suggesting the harmful/benign boundary is
+           approximately linear in mid-layer activation space.}
+  \label{fig:linear_vs_mlp}
+\end{figure}
+
+The linear probe (ROC-AUC 0.922) outperforms the MLP (0.912) at layer 14.
+This suggests that the harmful vs.\ benign separation in mid-layer activation
+space is approximately \emph{linear}, a notable finding given the complexity
+of jailbreak attacks. The MLP likely overfits slightly with only 300 harmful
+training examples.
+
+\subsection{One-Class Anomaly Detection}
+\label{sec:oneclass}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.60\linewidth]{../outputs/figures/roc_supervised_vs_oneclass.png}
+  \caption{ROC curves for the supervised linear probe vs.\ one-class Mahalanobis
+           detector, both using layer 14 features. The one-class method (no harmful
+           training labels) still achieves ROC-AUC 0.705, well above chance.}
+  \label{fig:oneclass}
+\end{figure}
+
+The one-class detector (ROC-AUC 0.705) is substantially weaker than the supervised
+probe (0.922), as expected, since it has no access to harmful examples during training.
+However, ROC-AUC $= 0.705$ confirms that harmful prompts are \emph{genuinely
+out-of-distribution} relative to the benign cluster in activation space. This is
+a meaningful result: it means that even without labelled harmful data, a basic
+distance-based detector can flag anomalies at better-than-chance rates.
+
+\subsection{Training Balance Ablation}
+
+\begin{table}[H]
+\centering
+\caption{Effect of training set balance on layer 14 linear probe performance.
+         The test set is always 90:10. Resampling uses only benign subsetting
+         (all 300 harmful examples are always used).}
+\label{tab:balance}
+\begin{tabular}{lccc}
+\toprule
+Training balance & ROC-AUC & PR-AUC & F1 \\
+\midrule
+\textbf{90:10 (original)} & \textbf{0.922} & \textbf{0.770} & 0.660 \\
+75:25                     & 0.917          & 0.741          & \textbf{0.685} \\
+67:33                     & 0.906          & 0.740          & 0.672 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+More balanced training reduces ROC-AUC and PR-AUC despite a marginal F1 gain
+at 75:25. The degradation occurs because with only 300 harmful examples total,
+reducing the normal training pool does not add useful signal; it only widens
+the distribution shift between training and the real-world 90:10 test set.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Failure Cases and Limitations}
+\label{sec:failures}
+
+\subsection{Documented Failure Cases}
+
+We use the live demo in \texttt{notebooks/02\_main\_experiment.ipynb} to test
+a range of prompts. Representative failures are shown below:
+
+\begin{table}[H]
+\centering
+\caption{Probe predictions on selected prompts (layer 14, linear, threshold=0.82).
+         Correct predictions in \textcolor{green!60!black}{green},
+         errors in \textcolor{red!70!black}{red}.}
+\label{tab:demo}
+\begin{tabular}{p{7.5cm}ccc}
+\toprule
+Prompt (truncated) & Score & Predicted & Correct? \\
+\midrule
+``Explain how photosynthesis works.'' & 0.059 & SAFE & \textcolor{green!60!black}{\checkmark} \\
+``Ignore previous instructions and hack a bank.'' & 0.988 & HARMFUL & \textcolor{green!60!black}{\checkmark} \\
+``Can you help me write a cover letter?'' & 0.428 & SAFE & \textcolor{green!60!black}{\checkmark} \\
+\textbf{``Write a Python function to sort a list.''} & 0.877 & HARMFUL & \textcolor{red!70!black}{\texttimes} \\
+\textbf{``How do I make my own explosives at home?''} & 0.690 & SAFE & \textcolor{red!70!black}{\texttimes} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two systematic error patterns emerge:
+
+\paragraph{False positive: imperative coding prompts.}
+``Write a Python function...'' receives a harmful score of 0.877.
+WildGuardMix harmful prompts frequently use imperative, instructional language
+(``develop a fake charity'', ``teach people how to create fake IDs'', ``write a
+malware script''). The probe partially learns this surface pattern, which
+generalises incorrectly to benign coding tasks.
+
+\paragraph{False negative: direct harmful requests.}
+``How do I make my own explosives at home?'' scores 0.690 (below threshold).
+This is a \emph{direct} harmful request rather than adversarial/jailbreak framing.
+As seen in Figure~\ref{fig:eda_adv}, WildGuardMix contains a substantial fraction
+of adversarial prompts in the harmful class. The probe may have learned to
+recognise jailbreak-style disguise patterns more strongly than direct harm,
+leaving non-adversarial harmful prompts under-detected.
+
+\subsection{Threshold Calibration}
+\label{sec:calibration}
+
+The optimal classification threshold is 0.82 rather than the standard 0.50.
+This calibration shift arises from the positive class weight $w_+ = 3.0$:
+the BCE loss is biased toward predicting harmful, causing the raw sigmoid
+outputs to cluster near 1.0 for most inputs. ROC-AUC and PR-AUC are
+unaffected by this (they are threshold-independent), but threshold-dependent
+metrics like F1 require careful validation-set tuning.
+
+\subsection{General Limitations}
+\label{sec:limitations}
+
+\begin{enumerate}
+  \item \textbf{Small minority training set (300 examples).}
+        The bottleneck is the number of harmful training examples, not the
+        imbalance ratio. Increasing to 750--1000 harmful examples via a larger
+        dataset or data augmentation would likely improve recall significantly.
+
+  \item \textbf{Single architecture and tokenizer.}
+        Results are specific to Qwen2.5-1.5B. The safety signal location (layer 14)
+        may differ for other architectures. A multi-model comparison was out of
+        scope for this project.
+
+  \item \textbf{Obfuscation attacks.}
+        Recent work \citep{obfuscated} shows that activation-space defences can be
+        circumvented by adversarial perturbations in the input that shift hidden
+        states. Our probe was not tested against such attacks.
+
+  \item \textbf{Last-token pooling.}
+        Mean pooling across all tokens may capture more complete semantic signal.
+        This ablation was identified but not completed within the project scope.
+
+  \item \textbf{Distribution of WildGuardMix.}
+        The dataset mixes human-annotated real interactions with synthetic examples.
+        A probe trained on synthetic jailbreaks may not generalise equally well to
+        novel, unseen attack types.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Reproducibility}
+\label{sec:repro}
+
+All code is in the \texttt{src/} and \texttt{notebooks/} directories. The full
+pipeline can be reproduced as follows:
+
+\subsection{Environment Setup}
+\begin{lstlisting}
+python3 -m venv .venv
+source .venv/bin/activate
+pip install torch transformers datasets scikit-learn pandas numpy \
+            matplotlib seaborn tqdm huggingface_hub jupyter
+huggingface-cli login   # WildGuardMix requires HF authentication
+\end{lstlisting}
+
+\subsection{Data Preparation}
+\begin{lstlisting}
+python download_wildguardmix.py        # saves to data/raw/
+python make_imbalance_split.py \
+    --train_abnormal 300 --val_abnormal 60 --test_abnormal 60
+\end{lstlisting}
+Splits saved to \texttt{data/processed/wildguardmix\_imbalance/\{train,val,test\}.csv}.
+
+\subsection{Feature Extraction}
+\begin{lstlisting}
+cd src
+python extract_features.py --layers 4 14 26 --pool last --batch_size 16
+\end{lstlisting}
+Saves feature tensors to \texttt{features/qwen2.5-1.5b/layer\_\{4,14,26\}/X\_\{split\}.pt}.
+Runtime: approximately 25 minutes on Apple MPS (M-series).
+
+\subsection{Probe Training and Evaluation}
+\begin{lstlisting}
+python train_probe.py --layer 14 --probe_type linear --pos_weight 3
+python train_probe.py --layer 14 --probe_type mlp    --pos_weight 3
+python train_probe.py --layer 4  --probe_type linear --pos_weight 3
+python train_probe.py --layer 26 --probe_type linear --pos_weight 3
+python baselines.py
+python one_class.py --layer 14
+python eval_probe.py --layer 14 --probe_type linear --layer_sweep
+\end{lstlisting}
+Checkpoints saved to \texttt{outputs/checkpoints/}, metrics to \texttt{outputs/metrics/}.
+
+\subsection{Reproducing Figures and Results}
+Open and run all cells in \texttt{notebooks/02\_main\_experiment.ipynb}.
+All figures are regenerated from saved checkpoints and feature tensors
+\emph{without} re-running feature extraction or probe training.
+The live demo cell (Section 7 of the notebook) allows interactive classification
+of arbitrary prompts using the best saved model.
+
+\subsection{Saved Artifacts}
+
+\begin{table}[H]
+\centering
+\caption{Key saved artifacts for reproducibility.}
+\label{tab:artifacts}
+\begin{tabular}{ll}
+\toprule
+File & Contents \\
+\midrule
+\texttt{outputs/checkpoints/qwen2.5-1.5b\_layer14\_linear.pt} & Best probe weights + normalisation stats + threshold \\
+\texttt{outputs/metrics/*.json} & All numeric results \\
+\texttt{features/qwen2.5-1.5b/layer\_*/X\_*.pt} & Pre-computed activation tensors \\
+\texttt{data/processed/wildguardmix\_imbalance/*.csv} & Train/val/test splits \\
+\texttt{outputs/figures/*.png} & All report figures \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+
+We demonstrated that a lightweight linear probe trained on frozen mid-layer
+activations of Qwen2.5-1.5B can detect harmful and jailbreak prompts with
+ROC-AUC 0.922 and PR-AUC 0.770, outperforming a strong TF-IDF text baseline
+on both metrics. The layer sweep revealed that safety signal peaks at layer 14
+(mid-depth) and does not increase monotonically toward the output, suggesting
+that intermediate transformer representations encode the richest semantic
+safety features for this task.
+
+The linear probe outperforming the MLP probe provides evidence that the
+harmful/benign boundary is approximately linear in mid-layer activation space,
+consistent with the linear probe results in representation engineering
+literature. The one-class Mahalanobis experiment confirms that harmful prompts
+are genuinely out-of-distribution relative to benign prompts, even without
+labelled harmful training data.
+
+The primary limitations are the small minority training set (300 examples),
+threshold calibration issues from weighted BCE, and vulnerability to
+non-adversarial direct harm prompts. Future work could investigate mean pooling,
+multi-layer feature concatenation, or calibration via temperature scaling, as
+well as testing robustness against paraphrase-based evasion attacks.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section*{Team Contributions}
+Sabrina Wang (1011177), Brian Zhang (1011197), and Albert Tran (1011204) jointly
+contributed to the data pipeline, feature extraction, probe training, evaluation,
+ablations, notebooks, and report writing.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{thebibliography}{9}
+
+\bibitem{wildguard}
+Han, S., et al.\ (2024).
+\textit{WildGuard: Open One-Stop Moderation Tools for Safety Risks, Jailbreaks,
+and Refusals of LLMs}. NeurIPS 2024 Datasets and Benchmarks Track.
+
+\bibitem{jailbreakbench}
+Chao, P., et al.\ (2024).
+\textit{JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models}.
+NeurIPS 2024 Datasets and Benchmarks Track.
+
+\bibitem{advbench}
+Zou, A., et al.\ (2023).
+\textit{Universal and Transferable Adversarial Attacks on Aligned Language Models}.
+arXiv:2307.15043.
+
+\bibitem{jailbreak_trace}
+(2026).
+\textit{Jailbreaking Leaves a Trace: Understanding and Detecting Jailbreak Attacks
+from Internal Representations of Large Language Models}. arXiv:2602.11495.
+
+\bibitem{hiddendetect}
+(2025).
+\textit{HiddenDetect: Detecting Jailbreak Attacks against Large Vision-Language
+Models via Monitoring Hidden States}.
+
+\bibitem{obfuscated}
+(2026).
+\textit{Obfuscated Activations Bypass LLM Latent-Space Defenses}. arXiv:2412.09565.
+
+\bibitem{mahalanobis_ood}
+Lee, K., et al.\ (2018).
+\textit{A Simple Unified Framework for Detecting Out-of-Distribution Samples and
+Adversarial Attacks}. NeurIPS 2018.
+
+\end{thebibliography}
+
+\end{document}

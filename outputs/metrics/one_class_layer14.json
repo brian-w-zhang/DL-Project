@@ -1,0 +1,10 @@
+{
+  "method": "one_class_mahalanobis",
+  "layer": 14,
+  "model_slug": "qwen2.5-1.5b",
+  "n_benign_train": 2700,
+  "threshold_percentile": 95,
+  "test_roc_auc": 0.7049382716049383,
+  "test_pr_auc": 0.1802638261868557,
+  "test_f1_harmful": 0.2632794457274827
+}
