@@ -1,0 +1,11 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B",
+  "model_slug": "qwen2.5-1.5b-meanpool",
+  "layers": [
+    19
+  ],
+  "pool": "mean",
+  "max_length": 256,
+  "batch_size": 16,
+  "seed": 42
+}

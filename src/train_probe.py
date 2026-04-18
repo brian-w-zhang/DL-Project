@@ -87,13 +87,15 @@ def train(
     pos_weight: float,
     harmful_frac: float | None,
     run_name: str | None,
+    model_slug: str | None = None,
 ) -> None:
     set_seed(seed)
     device = torch.device("cpu")  # probes are tiny, CPU is fine
 
-    X_train, y_train = load_features(MODEL_SLUG, layer, "train")
-    X_val, y_val = load_features(MODEL_SLUG, layer, "val")
-    X_test, y_test = load_features(MODEL_SLUG, layer, "test")
+    slug = model_slug or MODEL_SLUG
+    X_train, y_train = load_features(slug, layer, "train")
+    X_val, y_val = load_features(slug, layer, "val")
+    X_test, y_test = load_features(slug, layer, "test")
 
     X_train = X_train.float()
     X_val = X_val.float()
@@ -208,7 +210,7 @@ def train(
     print(f"Checkpoint saved -> {ckpt_path}")
 
     metrics = {
-        "model_slug": MODEL_SLUG,
+        "model_slug": slug,
         "layer": layer,
         "probe_type": probe_type,
         "best_epoch": best_epoch,
@@ -245,6 +247,9 @@ def main() -> None:
                         help="Resample train so harmful=this fraction e.g. 0.25 for 75:25")
     parser.add_argument("--run_name", type=str, default=None,
                         help="Custom name for checkpoint/metrics files (default: auto)")
+    parser.add_argument("--model_slug", type=str, default=None,
+                        help="Override feature slug (default: MODEL_SLUG from utils). "
+                             "Use to load from e.g. qwen2.5-1.5b-meanpool.")
     args = parser.parse_args()
 
     print(f"Training {args.probe_type} probe on layer {args.layer} features...")
@@ -260,6 +265,7 @@ def main() -> None:
         pos_weight=args.pos_weight,
         harmful_frac=args.harmful_frac,
         run_name=args.run_name,
+        model_slug=args.model_slug,
     )
 
 

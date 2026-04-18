@@ -53,11 +53,13 @@ def extract_all(
     batch_size: int,
     max_length: int,
     seed: int,
+    out_slug: str | None = None,
 ) -> None:
     set_seed(seed)
     device = get_device()
+    slug = out_slug or MODEL_SLUG
     print(f"Device: {device}")
-    print(f"Loading model: {MODEL_NAME}")
+    print(f"Loading model: {MODEL_NAME}  |  saving as slug: {slug}")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModel.from_pretrained(MODEL_NAME, output_hidden_states=True)
@@ -69,14 +71,14 @@ def extract_all(
 
     config_out = {
         "model": MODEL_NAME,
-        "model_slug": MODEL_SLUG,
+        "model_slug": slug,
         "layers": layers,
         "pool": pool,
         "max_length": max_length,
         "batch_size": batch_size,
         "seed": seed,
     }
-    config_path = PATHS["features"] / MODEL_SLUG / "extraction_config.json"
+    config_path = PATHS["features"] / slug / "extraction_config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         json.dump(config_out, f, indent=2)
@@ -115,7 +117,7 @@ def extract_all(
 
         for layer_idx in layers:
             X = torch.cat(layer_vecs[layer_idx], dim=0)  # (N, dim)
-            save_features(X, y_tensor, MODEL_SLUG, layer_idx, split)
+            save_features(X, y_tensor, slug, layer_idx, split)
             print(f"  Layer {layer_idx}: saved X={tuple(X.shape)}, y={tuple(y_tensor.shape)}")
 
     print("\nExtraction complete.")
@@ -128,6 +130,8 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_length", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--out_slug", type=str, default=None,
+                        help="Override save slug (default: model slug). Use to avoid overwriting existing features.")
     args = parser.parse_args()
 
     extract_all(
@@ -136,6 +140,7 @@ def main() -> None:
         batch_size=args.batch_size,
         max_length=args.max_length,
         seed=args.seed,
+        out_slug=args.out_slug,
     )
 
 

@@ -351,7 +351,8 @@ TF-IDF + LogReg (text baseline) & 0.877 & 0.652 & 0.589 \\
 Activation probe, Layer 4  (early),      Linear  & 0.844 & 0.665 & 0.607 \\
 Activation probe, Layer 14 (mid),        Linear  & 0.922 & 0.770 & 0.660 \\
 Activation probe, Layer 14 (mid),        MLP     & 0.912 & 0.728 & 0.636 \\
-Activation probe, Layer 19 (upper-mid),  Linear  & \textbf{0.934} & \textbf{0.781} & \textbf{0.738} \\
+Activation probe, Layer 19 (upper-mid),  Linear (last-token) & \textbf{0.934} & 0.781 & 0.738 \\
+Activation probe, Layer 19 (upper-mid),  Linear (mean pool) & 0.930 & \textbf{0.809} & \textbf{0.779} \\
 Activation probe, Layer 26 (late),       Linear  & 0.892 & 0.740 & 0.672 \\
 \midrule
 One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & 0.263 \\
@@ -362,6 +363,9 @@ One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & 0.263 \\
 The best activation probe (layer 19) outperforms the TF-IDF baseline on both
 ROC-AUC ($+0.057$) and PR-AUC ($+0.129$), confirming that internal
 representations carry richer safety signal than surface text patterns.
+Mean pooling achieves higher PR-AUC and F1 than last-token pooling at the same
+layer, while last-token retains a marginal ROC-AUC advantage; the two are
+broadly comparable (see also Section~\ref{sec:pooling}).
 
 \subsection{Layer Sweep}
 \label{sec:layer_sweep}
@@ -463,6 +467,63 @@ out-of-distribution} relative to the benign cluster in activation space. This is
 a meaningful result: it means that even without labelled harmful data, a basic
 distance-based detector can flag anomalies at better-than-chance rates.
 
+\subsection{t-SNE Visualization of Layer 19 Activations}
+\label{sec:tsne}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.70\linewidth]{../outputs/figures/tsne_layer19.png}
+  \caption{t-SNE projection of the 1152-dimensional layer 19 hidden states on the
+           600-sample test set. Blue = benign (540), red = harmful (60).
+           The two classes form largely separable clusters, providing geometric
+           evidence that the linear probe's decision boundary is meaningful in
+           activation space.}
+  \label{fig:tsne}
+\end{figure}
+
+The t-SNE plot shows that harmful and benign prompts occupy distinct regions of the
+layer 19 representation space. The harmful cluster (red) is compact and spatially
+concentrated, consistent with the high ROC-AUC of 0.934. A small number of
+``others'' subcategory prompts (the hardest to detect) appear near the boundary or
+embedded in the benign cloud, which explains the probe's lower recall on that category
+(see Section~\ref{sec:subcategory}).
+
+\subsection{Per-Harm-Category Breakdown}
+\label{sec:subcategory}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{../outputs/figures/subcategory_breakdown.png}
+  \caption{Layer 19 linear probe recall per harm subcategory on the test set
+           (at the optimal threshold of 0.84). Numbers on bars show
+           \emph{caught/total} counts. Categories with fewer than 2 samples
+           are omitted from generalisation conclusions.}
+  \label{fig:subcategory}
+\end{figure}
+
+The probe achieves perfect recall (1.0) on the majority of specific harm
+categories --- including \emph{sexual content}, \emph{cyberattack},
+\emph{defamation}, \emph{fraud}, \emph{violence}, \emph{disinformation},
+and \emph{copyright violations}. The hardest category is ``others'' (recall
+0.26 on 19 samples), which is a heterogeneous catch-all bucket in WildGuardMix
+without a well-defined semantic signature. \emph{Social stereotypes and unfair
+discrimination} also proves challenging (recall 0.44 on 9 samples), likely
+because these prompts are phrased more neutrally and their harmful intent is
+implicit rather than lexically salient.
+
+\subsection{Pooling Strategy Ablation}
+\label{sec:pooling}
+
+Last-token pooling selects the hidden vector at the final non-padding position,
+relying on the autoregressive model's tendency to compress context into the last
+token. Mean pooling averages over all non-padding positions, incorporating signal
+from the full prompt. At layer 19, mean pooling improves PR-AUC by $+0.028$ and
+F1 by $+0.04$ relative to last-token, while ROC-AUC is nearly identical
+(0.930 vs.\ 0.934). The PR-AUC gain suggests mean pooling captures a more
+complete semantic representation of the prompt, which benefits precision-recall
+performance under class imbalance. For deployment, mean pooling is the preferred
+choice if precision-recall is the primary concern.
+
 \subsection{Training Balance Ablation}
 
 \begin{table}[H]
@@ -561,10 +622,6 @@ metrics like F1 require careful validation-set tuning.
         circumvented by adversarial perturbations in the input that shift hidden
         states. Our probe was not tested against such attacks.
 
-  \item \textbf{Last-token pooling.}
-        Mean pooling across all tokens may capture more complete semantic signal.
-        This ablation was identified but not completed within the project scope.
-
   \item \textbf{Distribution of WildGuardMix.}
         The dataset mixes human-annotated real interactions with synthetic examples.
         A probe trained on synthetic jailbreaks may not generalise equally well to
@@ -659,11 +716,13 @@ literature. The one-class Mahalanobis experiment confirms that harmful prompts
 are genuinely out-of-distribution relative to benign prompts, even without
 labelled harmful training data.
 
-The primary limitations are the small minority training set (300 examples),
-threshold calibration issues from weighted BCE, and vulnerability to
-non-adversarial direct harm prompts. Future work could investigate mean pooling,
-multi-layer feature concatenation, or calibration via temperature scaling, as
-well as testing robustness against paraphrase-based evasion attacks.
+A mean pooling ablation shows comparable performance to last-token pooling
+(PR-AUC 0.809 vs.\ 0.781), with mean pooling preferred when precision-recall
+is the primary concern. The primary remaining limitations are the small minority
+training set (300 examples), threshold calibration from weighted BCE, and
+vulnerability to socially nuanced harm categories. Future work could explore
+multi-layer feature concatenation, temperature scaling for calibration, and
+robustness testing against paraphrase-based evasion attacks.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section*{Team Contributions}
