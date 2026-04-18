@@ -1,5 +1,9 @@
 \documentclass[11pt,a4paper]{article}
 
+% Latin Modern (scalable) — avoids microtype + pdfTeX "font expansion" fatal error
+% with default Computer Modern bitmap fonts on minimal TeX installs.
+\usepackage{lmodern}
+
 % ── Packages ──────────────────────────────────────────────────────────────────
 \usepackage[margin=2.5cm]{geometry}
 \setlength{\headheight}{14pt}
