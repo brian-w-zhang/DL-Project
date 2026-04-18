@@ -120,12 +120,13 @@ The main contributions of this project are:
 \paragraph{Activation probing for safety.}
 Zou et al.\ (Representation Engineering, 2023) demonstrated that safety-relevant
 concepts can be linearly decoded from LLM hidden states. More directly related,
-\citet{jailbreak_trace} propose a tensor-based latent framework for detecting jailbreaks
-from internal representations without model fine-tuning. \citet{hiddendetect} extend
-this idea to vision-language models by monitoring hidden states at inference time.
-\citet{obfuscated} show that while linear probes successfully flag standard jailbreaks,
-they can be bypassed by obfuscation attacks, a limitation we acknowledge in
-Section~\ref{sec:limitations}.
+Kadali and Papalexakis \cite{jailbreak_trace} propose a tensor-based latent framework
+for detecting jailbreaks from internal representations without model fine-tuning.
+Jiang et al.\ \cite{hiddendetect} extend this idea to vision-language models by
+monitoring hidden states at inference time.
+Bailey et al.\ \cite{obfuscated} show that while linear probes successfully flag
+standard jailbreaks, they can be bypassed by obfuscation attacks, a limitation we
+acknowledge in Section~\ref{sec:limitations}.
 
 \paragraph{Safety datasets and benchmarks.}
 AdvBench \citep{advbench} and JailbreakBench \citep{jailbreakbench} are standard
@@ -1228,17 +1229,18 @@ Zou, A., et al.\ (2023).
 arXiv:2307.15043.
 
 \bibitem{jailbreak_trace}
-(2026).
+Kadali, S.D.S.S., and Papalexakis, E.E.\ (2026).
 \textit{Jailbreaking Leaves a Trace: Understanding and Detecting Jailbreak Attacks
 from Internal Representations of Large Language Models}. arXiv:2602.11495.
 
 \bibitem{hiddendetect}
-(2025).
+Jiang, Y., Gao, X., Peng, T., Tan, Y., Zhu, X., Zheng, B., and Yue, X.\ (2025).
 \textit{HiddenDetect: Detecting Jailbreak Attacks against Large Vision-Language
-Models via Monitoring Hidden States}.
+Models via Monitoring Hidden States}. ACL 2025. arXiv:2502.14744.
 
 \bibitem{obfuscated}
-(2026).
+Bailey, L., Serrano, A., Sheshadri, A., Seleznyov, M., Taylor, J., Jenner, E.,
+Hilton, J., Casper, S., Guestrin, C., and Emmons, S.\ (2024).
 \textit{Obfuscated Activations Bypass LLM Latent-Space Defenses}. arXiv:2412.09565.
 
 \bibitem{mahalanobis_ood}
