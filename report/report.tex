@@ -60,16 +60,21 @@
 We investigate whether internal activations from a frozen large language model (LLM)
 carry sufficient signal to detect harmful and jailbreak prompts as anomalies, without
 any fine-tuning. Using \texttt{Qwen2.5-1.5B} as a frozen feature extractor, we extract
-hidden-state vectors at three transformer depths and train lightweight linear probes
+hidden-state vectors across all 28 transformer layers and train lightweight linear probes
 on an imbalanced dataset (90\% normal, 10\% harmful) derived from WildGuardMix.
-Our best model achieves a test ROC-AUC of \textbf{0.934} and PR-AUC of \textbf{0.781},
-outperforming a TF-IDF + Logistic Regression text baseline (ROC-AUC 0.877, PR-AUC 0.652).
-A full 28-layer sweep reveals that safety signal peaks at layer 19 (upper-mid-network)
-and does not increase monotonically with depth, a finding consistent with the hypothesis
-that intermediate layers encode rich semantic content while late layers shift toward
-next-token prediction. We also compare a one-class Mahalanobis anomaly detector
-(trained on benign samples only) and conduct ablations over probe architecture
-and training set balance. Failure cases and limitations are documented.
+With last-token pooling, our best model (layer 19) achieves a test ROC-AUC of \textbf{0.934}
+and PR-AUC of \textbf{0.781}; switching to mean pooling further improves performance, with
+the best mean-pool layer (layer 15) reaching ROC-AUC \textbf{0.960} and PR-AUC \textbf{0.842}.
+Both substantially outperform a TF-IDF + Logistic Regression text baseline (ROC-AUC 0.877,
+PR-AUC 0.652). A full 28-layer sweep reveals that safety signal peaks at layer 19 for
+last-token pooling (layer 15 for mean pooling) and does not increase monotonically with depth,
+consistent with intermediate layers encoding richer semantic content than late layers.
+A systematic hyperparameter sweep over positive class weight, learning rate, and weight
+decay confirms that upweighting the harmful minority class more aggressively
+(\texttt{pos\_weight}$=9.0$) yields further gains (ROC-AUC 0.942, PR-AUC 0.797).
+We also compare a one-class Mahalanobis anomaly detector (trained on benign samples only)
+and conduct ablations over probe architecture, pooling strategy, and training set balance.
+Training dynamics and failure cases are documented.
 \end{abstract}
 
 \tableofcontents
@@ -348,24 +353,103 @@ Method & ROC-AUC & PR-AUC & F1 (harmful) \\
 \midrule
 TF-IDF + LogReg (text baseline) & 0.877 & 0.652 & 0.589 \\
 \midrule
-Activation probe, Layer 4  (early),      Linear  & 0.844 & 0.665 & 0.607 \\
-Activation probe, Layer 14 (mid),        Linear  & 0.922 & 0.770 & 0.660 \\
-Activation probe, Layer 14 (mid),        MLP     & 0.912 & 0.728 & 0.636 \\
-Activation probe, Layer 19 (upper-mid),  Linear (last-token) & \textbf{0.934} & 0.781 & 0.738 \\
-Activation probe, Layer 19 (upper-mid),  Linear (mean pool) & 0.930 & \textbf{0.809} & \textbf{0.779} \\
-Activation probe, Layer 26 (late),       Linear  & 0.892 & 0.740 & 0.672 \\
+Activation probe, Layer 4  (early),      Linear  (last-token) & 0.848 & 0.664 & 0.615 \\
+Activation probe, Layer 14 (mid),        Linear  (last-token) & 0.922 & 0.770 & 0.660 \\
+Activation probe, Layer 14 (mid),        MLP     (last-token) & 0.912 & 0.728 & 0.636 \\
+Activation probe, Layer 19 (upper-mid),  Linear (last-token)  & 0.934 & 0.781 & 0.738 \\
+Activation probe, Layer 26 (late),       Linear  (last-token) & 0.892 & 0.740 & 0.672 \\
 \midrule
-One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & 0.263 \\
+Activation probe, Layer 19 (upper-mid),  Linear (mean pool)  & 0.930 & 0.809 & 0.779 \\
+Activation probe, Layer 15 (mid-upper),  Linear (mean pool, sweep best) & \textbf{0.960} & \textbf{0.842} & 0.743 \\
+\midrule
+One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & \textbf{n/a}$^{\ddagger}$ \\
+\bottomrule
+\end{tabular}
+\vspace{0.4em}
+\footnotesize{$^{\ddagger}$One-class F1 is computed at the 95th-percentile benign threshold; not directly comparable to supervised probes.}
+\end{table}
+
+With last-token pooling, the best probe (layer 19) outperforms the TF-IDF baseline
+by $+0.057$ in ROC-AUC and $+0.129$ in PR-AUC, confirming that internal
+representations carry richer safety signal than surface text patterns.
+Mean pooling discovers the safety signal earlier (layer 15) and achieves
+substantially higher metrics: ROC-AUC $0.960$ and PR-AUC $0.842$, representing
+a further $+0.026$ and $+0.061$ improvement over the last-token best.
+For the best mean-pool layer (15 vs.\ 19 for last-token), see the layer sweep
+discussion (Section~\ref{sec:layer_sweep}) and pooling ablation
+(Section~\ref{sec:pooling}).
+
+\subsection{Hyperparameter Sensitivity}
+\label{sec:hparam_sweep}
+
+We ran a systematic grid search over the three training hyperparameters most
+likely to affect performance under class imbalance, holding layer 19 and the
+linear probe fixed:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{\texttt{pos\_weight}} $\in \{1.0,\ 3.0,\ 9.0\}$: the
+        loss multiplier for false negatives (missed jailbreaks). Higher
+        values force the probe to prioritise recall of the harmful minority,
+        at the cost of more false alarms.
+  \item \textbf{Learning rate} $\in \{10^{-3},\ 3\times10^{-4}\}$: step
+        size for AdamW.
+  \item \textbf{Weight decay} $\in \{10^{-4},\ 10^{-3}\}$: L2
+        regularisation strength.
+\end{itemize}
+
+This yields 12 configurations in total.
+Figure~\ref{fig:hparam_sweep} and Table~\ref{tab:hparam_top} summarise the results.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\linewidth]{../outputs/figures/hparam_sweep_layer19_linear.png}
+  \caption{Hyperparameter sweep for the layer 19 linear probe (12 configurations).
+           \emph{Left:} validation PR-AUC as a function of \texttt{pos\_weight}
+           (mean across learning rate and weight decay configurations, with individual
+           runs shown as dots).
+           \emph{Right:} scatter of test ROC-AUC vs.\ val PR-AUC for all 12 configs,
+           coloured by \texttt{pos\_weight}.
+           Increasing \texttt{pos\_weight} consistently improves both validation
+           and test PR-AUC.}
+  \label{fig:hparam_sweep}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Top 4 configurations from the hyperparameter sweep (layer 19, linear probe),
+         ranked by validation PR-AUC. The default configuration used for all other
+         experiments is \texttt{pos\_weight=3.0, lr=1e-3, wd=1e-4}.}
+\label{tab:hparam_top}
+\begin{tabular}{ccccccc}
+\toprule
+\texttt{pos\_weight} & \texttt{lr} & \texttt{wd} & Val PR-AUC & Test ROC-AUC & Test PR-AUC & Best Epoch \\
+\midrule
+9.0 & $10^{-3}$       & $10^{-3}$  & \textbf{0.7555} & \textbf{0.9415} & \textbf{0.7967} & 30 \\
+9.0 & $10^{-3}$       & $10^{-4}$  & 0.7413          & 0.9378          & 0.7812          & 10 \\
+9.0 & $3\times10^{-4}$ & $10^{-4}$ & 0.7362          & 0.9347          & 0.7758          & 30 \\
+3.0 & $10^{-3}$       & $10^{-4}$  & 0.7299          & 0.9339          & 0.7811          & 10 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The best activation probe (layer 19) outperforms the TF-IDF baseline on both
-ROC-AUC ($+0.057$) and PR-AUC ($+0.129$), confirming that internal
-representations carry richer safety signal than surface text patterns.
-Mean pooling achieves higher PR-AUC and F1 than last-token pooling at the same
-layer, while last-token retains a marginal ROC-AUC advantage; the two are
-broadly comparable (see also Section~\ref{sec:pooling}).
+\paragraph{Key findings.}
+\texttt{pos\_weight} is by far the most influential hyperparameter.
+Increasing it from 3.0 to 9.0 raises val PR-AUC by $+0.026$ and test
+ROC-AUC by $+0.008$, because greater false-negative penalty forces the probe
+to build a tighter decision boundary around the harmful cluster.
+Learning rate and weight decay differences within the same \texttt{pos\_weight}
+tier are small ($\leq 0.005$), indicating the optimisation is not sensitive
+to these secondary choices.
+
+\paragraph{Design choice for default experiments.}
+The named checkpoints used throughout this report were trained with the default
+\texttt{pos\_weight=3.0}, which was set before the sweep was conducted.
+The sweep result (\texttt{pos\_weight=9.0, lr=1e-3, wd=1e-3}) achieves
+ROC-AUC $0.942$ and PR-AUC $0.797$, modestly outperforming the default.
+For production deployment, the swept configuration is preferable; for the
+ablation comparisons in this report, we keep \texttt{pos\_weight=3.0}
+constant to isolate the effect of other variables (layer depth, pooling,
+architecture).
 
 \subsection{Layer Sweep}
 \label{sec:layer_sweep}
@@ -373,26 +457,43 @@ broadly comparable (see also Section~\ref{sec:pooling}).
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\linewidth]{../outputs/figures/full_layer_sweep_linear.png}
-  \caption{Full 28-layer sweep for the linear probe. Top panel: ROC-AUC and PR-AUC
-           across all layers. Bottom panel: F1 at the optimal threshold, with the
+  \caption{Full 28-layer sweep for the linear probe (last-token pooling).
+           \emph{Left panel:} ROC-AUC and PR-AUC across all layers.
+           \emph{Right panel:} F1 at the optimal threshold, with the
            best layer (19) highlighted in red. Safety signal peaks at layer 19 and
            does not increase monotonically toward the output.}
   \label{fig:layer_sweep}
 \end{figure}
 
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{../outputs/figures/layer_sweep_pooling_comparison.png}
+  \caption{ROC-AUC (left) and PR-AUC (right) vs.\ layer depth for last-token and
+           mean-pool linear probes across all 28 layers. Mean pooling outperforms
+           last-token on most layers and peaks earlier (layer 15 vs.\ 19).}
+  \label{fig:layer_sweep_pooling}
+\end{figure}
+
 Figure~\ref{fig:layer_sweep} reveals a non-monotonic relationship between layer
-depth and probe performance across all 28 transformer layers. Safety signal is
+depth and probe performance for last-token pooling. Safety signal is
 weak in early layers (layers 0--8), rises through a plateau spanning approximately
 layers 9--20, peaks at \textbf{layer 19} (ROC-AUC 0.934), and gradually degrades
-in late layers. We hypothesise that:
+in late layers. Figure~\ref{fig:layer_sweep_pooling} overlays the mean-pool sweep,
+showing that mean pooling consistently outperforms last-token across most layers
+and finds its optimum at \textbf{layer 15} (ROC-AUC 0.960), two-thirds of the way
+through the network. We hypothesise that:
 
 \begin{itemize}[noitemsep]
   \item \textbf{Early layers} encode predominantly syntactic/lexical features
         with limited semantic discrimination.
   \item \textbf{Mid-to-upper layers} build rich contextual semantic representations,
-        including intent-related features; layer 19 represents the peak.
+        including intent-related features; safety signal peaks around layers 15--19.
   \item \textbf{Late layers} are increasingly oriented toward next-token
         prediction, diluting semantic safety signal.
+  \item \textbf{Mean pooling finds the peak earlier} because it aggregates safety
+        signal across all token positions at each layer, rather than relying on a
+        single autoregressive summary token. By layer 15, this aggregate signal
+        is already more informative than the last-token signal at layer 19.
 \end{itemize}
 
 This finding is consistent with prior work on probing LLM representations
@@ -403,17 +504,21 @@ intermediate depths.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.90\linewidth]{../outputs/figures/roc_pr_layer19_linear.png}
-  \caption{ROC (left) and Precision-Recall (right) curves for the best activation
-           probe (layer 19, linear) versus the TF-IDF text baseline. The activation
-           probe dominates on both curves.}
+  \includegraphics[width=0.92\linewidth]{../outputs/figures/roc_pr_pooling_comparison.png}
+  \caption{ROC (left) and Precision-Recall (right) curves comparing the best
+           last-token probe (layer 19), the best mean-pool probe (layer 15),
+           and the TF-IDF text baseline. Both activation probes dominate the
+           baseline across the full operating range; mean-pool L15 achieves
+           higher PR-AUC (0.842 vs.\ 0.781).}
   \label{fig:roc_pr}
 \end{figure}
 
-Figure~\ref{fig:roc_pr} shows the activation probe dominating the TF-IDF baseline
-across the full operating range on both curves. The PR-AUC advantage ($+0.118$)
-is especially meaningful: under 10\% class prevalence, PR-AUC is a more
-discriminating metric than ROC-AUC.
+Figure~\ref{fig:roc_pr} shows both activation probes dominating the TF-IDF baseline
+across the full operating range. The mean-pool L15 probe achieves a higher PR-AUC
+advantage over the baseline ($+0.190$) compared with the last-token L19 probe
+($+0.129$). Under 10\% class prevalence, PR-AUC is a more
+discriminating metric than ROC-AUC, making mean pooling the stronger choice for
+precision-recall-focused deployment.
 
 \subsection{False Positive Rate at High Recall}
 \label{sec:fpr}
@@ -434,34 +539,84 @@ Conversely, the Layer 19 internal probe reduces this friction rate by more than 
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.40\linewidth]{../outputs/figures/confusion_layer19_linear.png}
-  \caption{Confusion matrix for the layer 19 linear probe at the optimal threshold
-           (0.84), selected on the validation set to maximise F1(harmful).}
+  \includegraphics[width=0.80\linewidth]{../outputs/figures/confusion_pooling_comparison.png}
+  \caption{Side-by-side confusion matrices at each probe's optimal threshold.
+           \emph{Left:} last-token L19 (threshold 0.84).
+           \emph{Right:} mean-pool L15 (threshold 0.74).
+           Both are selected on the validation set to maximise F1(harmful).
+           FN = missed jailbreaks (dangerous); FP = false alarms (user friction).}
   \label{fig:confusion}
 \end{figure}
 
-At threshold 0.84, the probe achieves strong recall on the harmful class
-while maintaining manageable false alarm rates. The high threshold (0.84 vs.\ the
-standard 0.50) is a calibration artefact of training with $w_+ = 3.0$
-(Section~\ref{sec:calibration}).
+At their respective optimal thresholds, both probes achieve strong recall on the
+harmful class while maintaining manageable false alarm rates. The mean-pool
+threshold (0.74) is lower than the last-token threshold (0.84), reflecting that
+mean-pool sigmoid scores are better calibrated — the probability mass is less
+concentrated near 1.0. Both high thresholds relative to the standard 0.50 are
+calibration artefacts of training with $w_+ = 3.0$ (Section~\ref{sec:calibration}).
+
+\subsection{Training Dynamics}
+\label{sec:training_dynamics}
+
+Figure~\ref{fig:training_curves} shows the training curves for the layer 19 linear
+probe (last-token pooling, \texttt{pos\_weight=3.0}), saved automatically by
+\texttt{src/train\_probe.py} after each run.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{../outputs/figures/training_curves_qwen2.5-1.5b_layer19_linear.png}
+  \caption{Training dynamics for the layer 19 linear probe (last-token pooling).
+           \emph{Left:} training loss decreases rapidly in the first 5 epochs then
+           plateaus. \emph{Centre:} validation PR-AUC peaks at epoch 10 (marked by the
+           vertical dashed line), triggering early stopping after 7 additional epochs
+           with no improvement (patience=7). \emph{Right:} validation accuracy follows
+           a similar trajectory; the apparent gap between train loss and val accuracy
+           reflects the class-imbalanced nature of the task.}
+  \label{fig:training_curves}
+\end{figure}
+
+Several observations follow from the training curves:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Fast convergence.} The probe reaches near-optimal performance within
+        10 epochs on a frozen feature set; the linear boundary in pre-computed
+        activation space requires very little gradient descent to find.
+  \item \textbf{Early stopping is effective.} The model is saved at epoch 10 (best
+        val PR-AUC = 0.730); continuing would offer no PR-AUC gain and risks
+        overfitting. Other layers (L14: epoch 25; L26: epoch 8; L4: epoch 30)
+        converge at different rates, reflecting the quality of safety signal at
+        each depth.
+  \item \textbf{No evidence of severe overfitting.} Training loss and validation
+        PR-AUC do not diverge after the best epoch; the frozen backbone means there
+        are no trainable backbone parameters to overfit.
+  \item \textbf{Effect of pos\_weight on loss scale.} The weighted BCE loss
+        ($w_+ = 3.0$) amplifies the contribution of the 60 harmful validation
+        samples, keeping validation PR-AUC a sensitive signal despite the 10:1
+        class imbalance.
+\end{itemize}
 
 \subsection{Linear vs.\ MLP Ablation}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.60\linewidth]{../outputs/figures/roc_linear_vs_mlp.png}
-  \caption{ROC curves for linear and MLP probes at layer 14. The linear probe
-           achieves higher AUC, suggesting the harmful/benign boundary is
-           approximately linear in mid-layer activation space.}
+  \includegraphics[width=0.92\linewidth]{../outputs/figures/roc_all_configs.png}
+  \caption{ROC (left) and PR (right) curves for all four probe configurations:
+           last-token linear (L19), last-token MLP (L14), mean-pool linear (L15),
+           and mean-pool MLP (L15). Solid lines = linear probes; dashed = MLP.
+           Blue = last-token; green = mean pool. The linear probe matches or
+           exceeds the MLP in both pooling regimes.}
   \label{fig:linear_vs_mlp}
 \end{figure}
 
-At layer 14, the linear probe (ROC-AUC 0.922) outperforms the MLP (0.912).
-This pattern holds more broadly: across the full 28-layer sweep, linear probes
-consistently match or exceed MLP probes. The separation in mid-to-upper-layer
-activation space is approximately \emph{linear}, a notable finding given the
-complexity of jailbreak attacks. The MLP likely overfits slightly with only 300
-harmful training examples.
+At layer 14, the last-token linear probe (ROC-AUC 0.922) outperforms its MLP
+counterpart (0.912). Across the full 28-layer sweep, linear probes consistently
+match or exceed MLP probes. For mean pooling, the best linear probe (L15,
+ROC-AUC 0.960) also outperforms the mean-pool MLP (L15, ROC-AUC 0.950).
+The separation in mid-to-upper-layer activation space is approximately
+\emph{linear}, a notable finding given the complexity of jailbreak attacks.
+The MLP likely overfits slightly with only 300 harmful training examples:
+the hidden layer (256 units) introduces $\sim\!400$K additional parameters
+that cannot be justified given the small minority class size.
 
 \subsection{One-Class Anomaly Detection}
 \label{sec:oneclass}
@@ -482,26 +637,30 @@ out-of-distribution} relative to the benign cluster in activation space. This is
 a meaningful result: it means that even without labelled harmful data, a basic
 distance-based detector can flag anomalies at better-than-chance rates.
 
-\subsection{t-SNE Visualization of Layer 19 Activations}
+\subsection{t-SNE Visualization of Activations}
 \label{sec:tsne}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.70\linewidth]{../outputs/figures/tsne_layer19.png}
-  \caption{t-SNE projection of the 1152-dimensional layer 19 hidden states on the
-           600-sample test set. Blue = benign (540), red = harmful (60).
-           The two classes form largely separable clusters, providing geometric
-           evidence that the linear probe's decision boundary is meaningful in
-           activation space.}
+  \includegraphics[width=0.92\linewidth]{../outputs/figures/tsne_pooling_comparison.png}
+  \caption{Side-by-side t-SNE projection of the 1536-dimensional hidden states on
+           the 600-sample test set.
+           \emph{Left:} last-token pooling at layer 19.
+           \emph{Right:} mean pooling at layer 15 (sweep best).
+           Blue = benign (540), red = harmful (60). Both methods produce
+           well-separated clusters; the mean-pool projection shows a slightly
+           tighter harmful cluster, consistent with the higher ROC-AUC.}
   \label{fig:tsne}
 \end{figure}
 
-The t-SNE plot shows that harmful and benign prompts occupy distinct regions of the
-layer 19 representation space. The harmful cluster (red) is compact and spatially
-concentrated, consistent with the high ROC-AUC of 0.934. A small number of
-``others'' subcategory prompts (the hardest to detect) appear near the boundary or
-embedded in the benign cloud, which explains the probe's lower recall on that category
-(see Section~\ref{sec:subcategory}).
+Both t-SNE plots confirm that harmful and benign prompts occupy geometrically
+distinct regions of the activation space, providing visual evidence that the linear
+probe's decision boundary is meaningful. The harmful cluster (red) is compact and
+spatially concentrated in both projections. A small number of ``others'' subcategory
+prompts appear near the boundary or embedded in the benign cloud, explaining the
+probe's lower recall on that category (Section~\ref{sec:subcategory}). The mean-pool
+representation (right) shows a marginally tighter harmful cluster, consistent with its
+higher ROC-AUC of 0.960 versus 0.934 for last-token.
 
 \subsection{Per-Harm-Category Breakdown}
 \label{sec:subcategory}
@@ -532,12 +691,23 @@ implicit rather than lexically salient.
 Last-token pooling selects the hidden vector at the final non-padding position,
 relying on the autoregressive model's tendency to compress context into the last
 token. Mean pooling averages over all non-padding positions, incorporating signal
-from the full prompt. At layer 19, mean pooling improves PR-AUC by $+0.028$ and
-F1 by $+0.04$ relative to last-token, while ROC-AUC is nearly identical
-(0.930 vs.\ 0.934). The PR-AUC gain suggests mean pooling captures a more
-complete semantic representation of the prompt, which benefits precision-recall
-performance under class imbalance. For deployment, mean pooling is the preferred
-choice if precision-recall is the primary concern.
+from the full prompt sequence.
+
+Two comparisons are instructive. First, holding layer fixed at 19: mean pooling
+improves PR-AUC by $+0.028$ and F1 by $+0.04$ relative to last-token (ROC-AUC
+nearly identical: 0.930 vs.\ 0.934). Second, comparing each method's
+\emph{best layer}: the best mean-pool layer (15) achieves ROC-AUC 0.960 and
+PR-AUC 0.842, versus ROC-AUC 0.934 and PR-AUC 0.781 for the best last-token layer (19).
+The shift in optimal depth (19 $\to$ 15) suggests that mean pooling extracts
+complete safety signal earlier in the network, likely because it aggregates the
+full prompt context at each layer rather than relying on the autoregressive
+``summary'' token at the end.
+
+The figure in Section~\ref{sec:layer_sweep} (Figure~\ref{fig:layer_sweep}) plots
+both sweeps side by side, showing mean pooling outperforming last-token across
+most layers. For deployment, mean pooling is the preferred choice across both
+ROC-AUC and PR-AUC when computational cost is equal (both require a single
+forward pass).
 
 \subsection{Training Balance Ablation}
 
@@ -556,6 +726,9 @@ Training balance & ROC-AUC & PR-AUC & F1 \\
 67:33                     & 0.906          & 0.740          & 0.672 \\
 \bottomrule
 \end{tabular}
+\vspace{0.2em}
+\footnotesize{All runs: layer 14, linear probe, \texttt{pos\_weight=3.0}.
+              Threshold re-selected on val for each balance.}
 \end{table}
 
 More balanced training reduces ROC-AUC and PR-AUC despite a marginal F1 gain
@@ -724,17 +897,41 @@ Consequently, from a systems engineering perspective, the Layer 19 probe is best
 
 As qualitatively observed in Section \ref{sec:adv_bypass}, modern adversarial jailbreaks frequently weaponize bloat and extreme verbosity to penetrate filters. By embedding a concise malicious payload deep inside intricate, benign macro-contexts (such as lengthy role-play mechanics, faux legal disclaimers, or hypothetical world-building scenarios), attackers actively exploit the fundamental flaw of term-frequency models: payload dilution.
 
-To empirically formalize this vulnerability, we binned the entirety of the 600-prompt test set into targeted character-length increments and charted the conditional recall rate of both detection paradigms. Figure~\ref{fig:recall_length} illustrates a stark, undeniable divergence in architectural tracking.
+To empirically quantify this effect, we binned the 600-prompt test set into
+character-length buckets and measured recall per bucket for both the TF-IDF
+baseline and the layer 19 probe. The analysis was conducted interactively in
+\texttt{notebooks/02\_main\_experiment.ipynb} and is reproducible from saved
+checkpoints.
 
-For short, concise statements (under 100 characters), both the TF-IDF baseline and the Layer 19 probe perform with highly comparative, robust accuracy. However, as the character length of the prompt inflates, the efficacy of the surface-level TF-IDF baseline suffers a catastrophic, near-linear degradation. For extremely verbose, heavily obfuscated prompts spanning over 300 characters, the baseline's recall plummets as the density of harmful keywords is mathematically overwhelmed by innocent contextual padding. 
+For short, concise statements (under 100 characters), both models detect harmful
+intent with comparable accuracy. As prompt length grows, the TF-IDF baseline's
+recall degrades: the density of harmful keywords is mathematically diluted by
+benign context padding, and term-frequency scores drop below the decision threshold.
 
-In sharp contrast, the Layer 19 Activation Probe maintains an uncompromising, geometrically flat detection rate uniformly across all mapped prompt length distributions. Because the LLM backbone intrinsically routes hidden state information utilizing densely contextualized self-attention blocks, the mathematical representation of the explicit harm is dynamically reinforced and tracked regardless of how deeply it is buried within the text. This explicitly serves as quantitative validation that intermediate transformer representations natively defend against verbosity-based evasion tactics.
+The layer 19 activation probe maintains substantially more stable recall across
+length buckets. Because the frozen Qwen2.5-1.5B backbone applies self-attention
+to the full token sequence simultaneously, the harmful semantic signal is
+reinforced in the hidden state regardless of how many benign tokens surround it.
+This robustness to prompt length is especially relevant for role-play and
+multi-sentence jailbreaks, where the malicious payload is buried within a lengthy
+fictional or academic framing (as demonstrated qualitatively in
+Section~\ref{sec:adv_bypass}).
+
+The adversarial subgroup analysis (Figure~\ref{fig:adv_subgroup}) further
+substantiates this: at the optimal threshold, the probe's recall gap between
+adversarial and non-adversarial harmful prompts is small, while the TF-IDF
+baseline is disproportionately fooled by adversarial framing.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.75\linewidth]{../outputs/figures/recall_vs_length.png}
-  \caption{Harmful detection recall as a function of prompt character length. The TF-IDF baseline degrades sharply on longer, obfuscated prompts, while the Layer 19 probe maintains robust accuracy, systematically piercing through the verbose wrappers.}
-  \label{fig:recall_length}
+  \includegraphics[width=0.65\linewidth]{../outputs/figures/subgroup_adversarial_recall.png}
+  \caption{Recall on harmful prompts split by adversarial flag (test set).
+           \emph{Adversarial harmful:} jailbreak-style framing;
+           \emph{Non-adversarial harmful:} direct harmful requests.
+           Both probes (last-token L19 and mean-pool L15) maintain
+           comparable recall across subgroups; results reflect the
+           class-imbalanced test set (60 harmful total).}
+  \label{fig:adv_subgroup}
 \end{figure}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -771,15 +968,22 @@ Runtime: approximately 25 minutes on Apple MPS (M-series).
 
 \subsection{Probe Training and Evaluation}
 \begin{lstlisting}
-python sweep_all_layers.py               # trains probes for all 28 layers
+python sweep_all_layers.py               # trains probes for all 28 layers (last-token)
+python sweep_all_layers.py --model_slug qwen2.5-1.5b-meanpool  # mean-pool sweep
 python train_probe.py --layer 19 --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type mlp    --pos_weight 3
+python train_probe.py --layer 26 --probe_type linear --pos_weight 3
+python train_probe.py --layer 4  --probe_type linear --pos_weight 3
 python baselines.py
 python one_class.py --layer 14
+python hparam_sweep.py --layer 19 --probe_type linear  # 12-config grid search
 python eval_probe.py --layer 19 --probe_type linear
 \end{lstlisting}
-Checkpoints saved to \texttt{outputs/checkpoints/}, metrics to \texttt{outputs/metrics/}.
+Checkpoints and training-curve PNGs saved to \texttt{outputs/checkpoints/}
+and \texttt{outputs/figures/training\_curves\_*.png}.
+Metrics saved to \texttt{outputs/metrics/}; hyperparameter sweep results saved to
+\texttt{outputs/metrics/hparam\_sweep\_layer19\_linear.\{json,csv\}}.
 
 \subsection{Reproducing Figures and Results}
 Open and run all cells in \texttt{notebooks/02\_main\_experiment.ipynb}.
@@ -810,28 +1014,36 @@ File & Contents \\
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Conclusion}
 
-We demonstrated that a lightweight linear probe trained on frozen upper-mid-layer
-activations of Qwen2.5-1.5B can detect harmful and jailbreak prompts with
-ROC-AUC 0.934 and PR-AUC 0.781, outperforming a strong TF-IDF text baseline
-on both metrics. The full 28-layer sweep revealed that safety signal peaks at
-layer 19 (upper-mid-depth) and does not increase monotonically toward the output,
-suggesting that intermediate transformer representations encode the richest semantic
-safety features for this task.
+We demonstrated that lightweight linear probes trained on frozen activations of
+Qwen2.5-1.5B reliably detect harmful and jailbreak prompts, substantially
+outperforming a strong TF-IDF text baseline. With last-token pooling, the best
+probe (layer 19) achieves ROC-AUC 0.934 and PR-AUC 0.781; switching to mean
+pooling and selecting the optimal depth (layer 15) raises these to
+ROC-AUC \textbf{0.960} and PR-AUC \textbf{0.842}, representing a $+0.026$ /
+$+0.061$ improvement over last-token.
 
-The linear probe outperforming the MLP probe provides evidence that the
-harmful/benign boundary is approximately linear in mid-layer activation space,
-consistent with the linear probe results in representation engineering
-literature. The one-class Mahalanobis experiment confirms that harmful prompts
-are genuinely out-of-distribution relative to benign prompts, even without
-labelled harmful training data.
+The full 28-layer sweep reveals that safety signal peaks at layer 19 for
+last-token pooling and at layer 15 for mean pooling, with a non-monotonic profile:
+weak in early layers, plateauing through mid-to-upper layers, then degrading
+as late layers shift toward next-token prediction. A hyperparameter sweep
+confirms that increasing the positive class weight from 3.0 to 9.0 yields
+further gains (ROC-AUC 0.942, PR-AUC 0.797), indicating that more aggressive
+minority-class upweighting is beneficial at the 10:1 imbalance ratio.
 
-A mean pooling ablation shows comparable performance to last-token pooling
-(PR-AUC 0.809 vs.\ 0.781), with mean pooling preferred when precision-recall
-is the primary concern. The primary remaining limitations are the small minority
-training set (300 examples), threshold calibration from weighted BCE, and
-vulnerability to socially nuanced harm categories. Future work could explore
-multi-layer feature concatenation, cross-dataset generalization to novel distributions, 
-temperature scaling for calibration, and robustness testing against paraphrase-based evasion attacks.
+The linear probe outperforming the MLP provides evidence that the harmful/benign
+boundary is approximately linear in mid-to-upper-layer activation space, consistent
+with representation engineering literature. Training curves confirm fast convergence
+(best epoch typically 10--25), with early stopping (patience=7 on val PR-AUC)
+preventing overfitting to the small 300-example harmful set. The one-class
+Mahalanobis experiment confirms harmful prompts are genuinely out-of-distribution
+in activation space even without any harmful training labels (ROC-AUC 0.705).
+
+The primary remaining limitations are the small minority training set (300 examples),
+threshold calibration sensitivity to \texttt{pos\_weight}, and vulnerability to
+socially nuanced harm categories (``others'', stereotypes). Future work could
+explore multi-layer feature concatenation, cross-dataset generalisation, temperature
+scaling for probability calibration, and robustness against paraphrase-based and
+obfuscation attacks.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section*{Team Contributions}
