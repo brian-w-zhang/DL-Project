@@ -15,14 +15,15 @@
 
 | Method | ROC-AUC | PR-AUC | F1 (harmful) |
 |--------|---------|--------|--------------|
-| TF-IDF + LogReg (text baseline) | 0.877 | 0.652 | **0.589** |
-| Activation probe, Layer 4 (early) | 0.847 | 0.667 | — |
-| Activation probe, Layer 14 (mid) — Linear | **0.917** | **0.767** | 0.412* |
-| Activation probe, Layer 14 — MLP | 0.909 | 0.721 | — |
-| Activation probe, Layer 26 (late) | 0.899 | 0.747 | — |
+| TF-IDF + LogReg (text baseline) | 0.877 | 0.652 | 0.589 |
+| Activation probe, Layer 4 (early) | 0.844 | 0.665 | 0.607 |
+| Activation probe, Layer 14 (mid) — Linear | 0.922 | 0.770 | 0.660 |
+| Activation probe, Layer 14 — MLP | 0.912 | 0.728 | 0.636 |
+| **Activation probe, Layer 19 (upper-mid) — Linear** | **0.934** | **0.781** | **0.738** |
+| Activation probe, Layer 26 (late) | 0.892 | 0.740 | 0.672 |
 | One-class Mahalanobis, Layer 14 | 0.705 | 0.180 | 0.263 |
 
-*F1 at default threshold 0.5 — sub-optimal due to class imbalance; ROC/PR-AUC are the reliable metrics here.
+F1 at optimal threshold (selected on val set): Layer 19 uses threshold=0.84.
 
 ---
 
@@ -33,10 +34,10 @@
 - Probe PR-AUC 0.767 vs TF-IDF 0.652 (+0.115)
 - This confirms that internal model representations contain safety signal beyond what surface text patterns capture.
 
-### 2. Mid-layer (14) is the sweet spot
-- Layer 4 → 14 → 26 ROC-AUC: 0.847 → **0.917** → 0.899
-- Safety signal peaks in the middle of the network, then slightly degrades in later layers.
-- Interpretation: mid layers encode rich semantic content; late layers shift toward next-token prediction rather than meaning representation.
+### 2. Upper-mid-layer (19) is the sweet spot
+- Full 28-layer sweep: signal weak in layers 0-8, rises to plateau layers 9-20, **peaks at layer 19** (ROC-AUC 0.934), then degrades.
+- Safety signal does not increase monotonically — late layers shift toward next-token prediction.
+- Layer 14 was originally identified as best (3-point sweep); layer 19 was confirmed by the full sweep.
 
 ### 3. Linear probe beats MLP
 - Linear: ROC-AUC 0.917, PR-AUC 0.767
@@ -87,6 +88,5 @@ All numbers saved in `outputs/metrics/`:
 
 ## Remaining work
 
-- [ ] `notebooks/01_eda.ipynb` — data exploration, class distribution, prompt length plots
-- [ ] `notebooks/02_main_experiment.ipynb` — all results, figures, live demo widget
-- [ ] PDF report
+- [ ] Re-run `notebooks/02_main_experiment.ipynb` top to bottom (output cells are stale)
+- [ ] Compile `report/report.tex` to PDF

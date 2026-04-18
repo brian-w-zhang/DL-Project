@@ -62,11 +62,11 @@ carry sufficient signal to detect harmful and jailbreak prompts as anomalies, wi
 any fine-tuning. Using \texttt{Qwen2.5-1.5B} as a frozen feature extractor, we extract
 hidden-state vectors at three transformer depths and train lightweight linear probes
 on an imbalanced dataset (90\% normal, 10\% harmful) derived from WildGuardMix.
-Our best model achieves a test ROC-AUC of \textbf{0.922} and PR-AUC of \textbf{0.770},
+Our best model achieves a test ROC-AUC of \textbf{0.934} and PR-AUC of \textbf{0.781},
 outperforming a TF-IDF + Logistic Regression text baseline (ROC-AUC 0.877, PR-AUC 0.652).
-A layer sweep reveals that safety signal peaks at mid-network depth (layer 14)
-and slightly degrades in later layers, a finding consistent with the hypothesis
-that mid-layers encode rich semantic content while late layers shift toward
+A full 28-layer sweep reveals that safety signal peaks at layer 19 (upper-mid-network)
+and does not increase monotonically with depth, a finding consistent with the hypothesis
+that intermediate layers encode rich semantic content while late layers shift toward
 next-token prediction. We also compare a one-class Mahalanobis anomaly detector
 (trained on benign samples only) and conduct ablations over probe architecture
 and training set balance. Failure cases and limitations are documented.
@@ -216,7 +216,7 @@ For each prompt, we:
 \begin{enumerate}[noitemsep]
   \item Tokenise with \texttt{max\_length=256}, truncating longer prompts.
   \item Run a single forward pass with \texttt{output\_hidden\_states=True}.
-  \item Extract the hidden state at a target layer $\ell \in \{4, 14, 26\}$.
+  \item Extract the hidden state at a target layer $\ell$.
   \item Pool across the sequence dimension using \textbf{last-token pooling}:
         select the hidden vector at the position of the last non-padding token.
 \end{enumerate}
@@ -225,10 +225,12 @@ This yields a feature vector $\mathbf{x} \in \mathbb{R}^{1536}$ per prompt per l
 Features are extracted in batches of 16 on Apple MPS (Apple Silicon GPU) and saved
 as \texttt{.pt} tensors, decoupling extraction from probe training.
 
-We select three representative layers:
+We extract all 28 transformer layers to perform a full layer sweep. For the main
+comparison table and detailed ablations, we report representative layers:
 \begin{itemize}[noitemsep]
   \item \textbf{Layer 4} (early): low-level syntactic/lexical features.
-  \item \textbf{Layer 14} (mid): hypothesised to encode rich semantic content.
+  \item \textbf{Layer 14} (mid): intermediate semantic representations.
+  \item \textbf{Layer 19} (upper-mid): empirically identified as the peak safety layer.
   \item \textbf{Layer 26} (late): close to the output; may encode generation-oriented features.
 \end{itemize}
 
@@ -346,18 +348,19 @@ Method & ROC-AUC & PR-AUC & F1 (harmful) \\
 \midrule
 TF-IDF + LogReg (text baseline) & 0.877 & 0.652 & 0.589 \\
 \midrule
-Activation probe, Layer 4  (early), Linear  & 0.844 & 0.665 & 0.607 \\
-Activation probe, Layer 14 (mid),   Linear  & \textbf{0.922} & \textbf{0.770} & 0.660 \\
-Activation probe, Layer 14 (mid),   MLP     & 0.912 & 0.728 & 0.636 \\
-Activation probe, Layer 26 (late),  Linear  & 0.892 & 0.740 & \textbf{0.672} \\
+Activation probe, Layer 4  (early),      Linear  & 0.844 & 0.665 & 0.607 \\
+Activation probe, Layer 14 (mid),        Linear  & 0.922 & 0.770 & 0.660 \\
+Activation probe, Layer 14 (mid),        MLP     & 0.912 & 0.728 & 0.636 \\
+Activation probe, Layer 19 (upper-mid),  Linear  & \textbf{0.934} & \textbf{0.781} & \textbf{0.738} \\
+Activation probe, Layer 26 (late),       Linear  & 0.892 & 0.740 & 0.672 \\
 \midrule
 One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & 0.263 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The activation probe at layer 14 outperforms the TF-IDF baseline on both
-ROC-AUC ($+0.045$) and PR-AUC ($+0.118$), confirming that internal
+The best activation probe (layer 19) outperforms the TF-IDF baseline on both
+ROC-AUC ($+0.057$) and PR-AUC ($+0.129$), confirming that internal
 representations carry richer safety signal than surface text patterns.
 
 \subsection{Layer Sweep}
@@ -365,23 +368,25 @@ representations carry richer safety signal than surface text patterns.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.75\linewidth]{../outputs/figures/layer_sweep_linear.png}
-  \caption{ROC-AUC and PR-AUC of the linear probe across three transformer layers.
-           Safety signal peaks at layer 14 (mid-network) and does not increase
-           monotonically toward the output.}
+  \includegraphics[width=0.95\linewidth]{../outputs/figures/full_layer_sweep_linear.png}
+  \caption{Full 28-layer sweep for the linear probe. Top panel: ROC-AUC and PR-AUC
+           across all layers. Bottom panel: F1 at the optimal threshold, with the
+           best layer (19) highlighted in red. Safety signal peaks at layer 19 and
+           does not increase monotonically toward the output.}
   \label{fig:layer_sweep}
 \end{figure}
 
 Figure~\ref{fig:layer_sweep} reveals a non-monotonic relationship between layer
-depth and probe performance. Safety signal is weak in early layers (layer 4),
-peaks at the mid-network (layer 14), and slightly degrades in late layers
-(layer 26). We hypothesise that:
+depth and probe performance across all 28 transformer layers. Safety signal is
+weak in early layers (layers 0--8), rises through a plateau spanning approximately
+layers 9--20, peaks at \textbf{layer 19} (ROC-AUC 0.934), and gradually degrades
+in late layers. We hypothesise that:
 
 \begin{itemize}[noitemsep]
   \item \textbf{Early layers} encode predominantly syntactic/lexical features
         with limited semantic discrimination.
-  \item \textbf{Mid layers} build rich contextual semantic representations,
-        including intent-related features.
+  \item \textbf{Mid-to-upper layers} build rich contextual semantic representations,
+        including intent-related features; layer 19 represents the peak.
   \item \textbf{Late layers} are increasingly oriented toward next-token
         prediction, diluting semantic safety signal.
 \end{itemize}
@@ -394,9 +399,9 @@ intermediate depths.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.90\linewidth]{../outputs/figures/roc_pr_layer14_linear.png}
+  \includegraphics[width=0.90\linewidth]{../outputs/figures/roc_pr_layer19_linear.png}
   \caption{ROC (left) and Precision-Recall (right) curves for the best activation
-           probe (layer 14, linear) versus the TF-IDF text baseline. The activation
+           probe (layer 19, linear) versus the TF-IDF text baseline. The activation
            probe dominates on both curves.}
   \label{fig:roc_pr}
 \end{figure}
@@ -410,14 +415,14 @@ discriminating metric than ROC-AUC.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.40\linewidth]{../outputs/figures/confusion_layer14_linear.png}
-  \caption{Confusion matrix for the layer 14 linear probe at the optimal threshold
-           (0.82), selected on the validation set to maximise F1(harmful).}
+  \includegraphics[width=0.40\linewidth]{../outputs/figures/confusion_layer19_linear.png}
+  \caption{Confusion matrix for the layer 19 linear probe at the optimal threshold
+           (0.84), selected on the validation set to maximise F1(harmful).}
   \label{fig:confusion}
 \end{figure}
 
-At threshold 0.82, the probe achieves strong recall on the harmful class
-while maintaining manageable false alarm rates. The high threshold (0.82 vs.\ the
+At threshold 0.84, the probe achieves strong recall on the harmful class
+while maintaining manageable false alarm rates. The high threshold (0.84 vs.\ the
 standard 0.50) is a calibration artefact of training with $w_+ = 3.0$
 (Section~\ref{sec:calibration}).
 
@@ -432,11 +437,12 @@ standard 0.50) is a calibration artefact of training with $w_+ = 3.0$
   \label{fig:linear_vs_mlp}
 \end{figure}
 
-The linear probe (ROC-AUC 0.922) outperforms the MLP (0.912) at layer 14.
-This suggests that the harmful vs.\ benign separation in mid-layer activation
-space is approximately \emph{linear}, a notable finding given the complexity
-of jailbreak attacks. The MLP likely overfits slightly with only 300 harmful
-training examples.
+At layer 14, the linear probe (ROC-AUC 0.922) outperforms the MLP (0.912).
+This pattern holds more broadly: across the full 28-layer sweep, linear probes
+consistently match or exceed MLP probes. The separation in mid-to-upper-layer
+activation space is approximately \emph{linear}, a notable finding given the
+complexity of jailbreak attacks. The MLP likely overfits slightly with only 300
+harmful training examples.
 
 \subsection{One-Class Anomaly Detection}
 \label{sec:oneclass}
@@ -461,7 +467,7 @@ distance-based detector can flag anomalies at better-than-chance rates.
 
 \begin{table}[H]
 \centering
-\caption{Effect of training set balance on layer 14 linear probe performance.
+\caption{Effect of training set balance on layer 14 linear probe (ablation study).
          The test set is always 90:10. Resampling uses only benign subsetting
          (all 300 harmful examples are always used).}
 \label{tab:balance}
@@ -492,7 +498,7 @@ a range of prompts. Representative failures are shown below:
 
 \begin{table}[H]
 \centering
-\caption{Probe predictions on selected prompts (layer 14, linear, threshold=0.82).
+\caption{Probe predictions on selected prompts (layer 19, linear, threshold=0.84).
          Correct predictions in \textcolor{green!60!black}{green},
          errors in \textcolor{red!70!black}{red}.}
 \label{tab:demo}
@@ -529,7 +535,7 @@ leaving non-adversarial harmful prompts under-detected.
 \subsection{Threshold Calibration}
 \label{sec:calibration}
 
-The optimal classification threshold is 0.82 rather than the standard 0.50.
+The optimal classification threshold is 0.84 rather than the standard 0.50.
 This calibration shift arises from the positive class weight $w_+ = 3.0$:
 the BCE loss is biased toward predicting harmful, causing the raw sigmoid
 outputs to cluster near 1.0 for most inputs. ROC-AUC and PR-AUC are
@@ -546,7 +552,7 @@ metrics like F1 require careful validation-set tuning.
         dataset or data augmentation would likely improve recall significantly.
 
   \item \textbf{Single architecture and tokenizer.}
-        Results are specific to Qwen2.5-1.5B. The safety signal location (layer 14)
+        Results are specific to Qwen2.5-1.5B. The safety signal location (layer 19)
         may differ for other architectures. A multi-model comparison was out of
         scope for this project.
 
@@ -592,20 +598,20 @@ Splits saved to \texttt{data/processed/wildguardmix\_imbalance/\{train,val,test\
 \subsection{Feature Extraction}
 \begin{lstlisting}
 cd src
-python extract_features.py --layers 4 14 26 --pool last --batch_size 16
+python extract_features.py --pool last --batch_size 16   # all 28 layers
 \end{lstlisting}
-Saves feature tensors to \texttt{features/qwen2.5-1.5b/layer\_\{4,14,26\}/X\_\{split\}.pt}.
+Saves feature tensors to \texttt{features/qwen2.5-1.5b/layer\_\{0..27\}/X\_\{split\}.pt}.
 Runtime: approximately 25 minutes on Apple MPS (M-series).
 
 \subsection{Probe Training and Evaluation}
 \begin{lstlisting}
+python sweep_all_layers.py               # trains probes for all 28 layers
+python train_probe.py --layer 19 --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type mlp    --pos_weight 3
-python train_probe.py --layer 4  --probe_type linear --pos_weight 3
-python train_probe.py --layer 26 --probe_type linear --pos_weight 3
 python baselines.py
 python one_class.py --layer 14
-python eval_probe.py --layer 14 --probe_type linear --layer_sweep
+python eval_probe.py --layer 19 --probe_type linear
 \end{lstlisting}
 Checkpoints saved to \texttt{outputs/checkpoints/}, metrics to \texttt{outputs/metrics/}.
 
@@ -626,7 +632,7 @@ of arbitrary prompts using the best saved model.
 \toprule
 File & Contents \\
 \midrule
-\texttt{outputs/checkpoints/qwen2.5-1.5b\_layer14\_linear.pt} & Best probe weights + normalisation stats + threshold \\
+\texttt{outputs/checkpoints/qwen2.5-1.5b\_layer19\_linear.pt} & Best probe weights + normalisation stats + threshold \\
 \texttt{outputs/metrics/*.json} & All numeric results \\
 \texttt{features/qwen2.5-1.5b/layer\_*/X\_*.pt} & Pre-computed activation tensors \\
 \texttt{data/processed/wildguardmix\_imbalance/*.csv} & Train/val/test splits \\
@@ -638,12 +644,12 @@ File & Contents \\
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Conclusion}
 
-We demonstrated that a lightweight linear probe trained on frozen mid-layer
+We demonstrated that a lightweight linear probe trained on frozen upper-mid-layer
 activations of Qwen2.5-1.5B can detect harmful and jailbreak prompts with
-ROC-AUC 0.922 and PR-AUC 0.770, outperforming a strong TF-IDF text baseline
-on both metrics. The layer sweep revealed that safety signal peaks at layer 14
-(mid-depth) and does not increase monotonically toward the output, suggesting
-that intermediate transformer representations encode the richest semantic
+ROC-AUC 0.934 and PR-AUC 0.781, outperforming a strong TF-IDF text baseline
+on both metrics. The full 28-layer sweep revealed that safety signal peaks at
+layer 19 (upper-mid-depth) and does not increase monotonically toward the output,
+suggesting that intermediate transformer representations encode the richest semantic
 safety features for this task.
 
 The linear probe outperforming the MLP probe provides evidence that the

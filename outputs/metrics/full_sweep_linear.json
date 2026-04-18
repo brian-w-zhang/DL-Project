@@ -1,0 +1,234 @@
+[
+  {
+    "layer": 0,
+    "probe_type": "linear",
+    "test_roc_auc": 0.6384104938271605,
+    "test_pr_auc": 0.15379388152989437,
+    "test_f1": 0.24571428571428572,
+    "best_threshold": 0.5700000000000001
+  },
+  {
+    "layer": 1,
+    "probe_type": "linear",
+    "test_roc_auc": 0.7659259259259259,
+    "test_pr_auc": 0.5229318746235586,
+    "test_f1": 0.4370860927152318,
+    "best_threshold": 0.6000000000000001
+  },
+  {
+    "layer": 2,
+    "probe_type": "linear",
+    "test_roc_auc": 0.7854938271604939,
+    "test_pr_auc": 0.5698006094577985,
+    "test_f1": 0.5416666666666666,
+    "best_threshold": 0.7700000000000001
+  },
+  {
+    "layer": 3,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8604938271604937,
+    "test_pr_auc": 0.6609749380971776,
+    "test_f1": 0.6304347826086957,
+    "best_threshold": 0.8400000000000002
+  },
+  {
+    "layer": 4,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8443518518518517,
+    "test_pr_auc": 0.6650399894054222,
+    "test_f1": 0.6067415730337079,
+    "best_threshold": 0.9300000000000002
+  },
+  {
+    "layer": 5,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8515123456790124,
+    "test_pr_auc": 0.6645560209597695,
+    "test_f1": 0.66,
+    "best_threshold": 0.8500000000000002
+  },
+  {
+    "layer": 6,
+    "probe_type": "linear",
+    "test_roc_auc": 0.834074074074074,
+    "test_pr_auc": 0.634171331644775,
+    "test_f1": 0.6041666666666666,
+    "best_threshold": 0.8300000000000002
+  },
+  {
+    "layer": 7,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8405864197530865,
+    "test_pr_auc": 0.6094062396933786,
+    "test_f1": 0.5842696629213483,
+    "best_threshold": 0.9000000000000001
+  },
+  {
+    "layer": 8,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8614506172839506,
+    "test_pr_auc": 0.6697067823186336,
+    "test_f1": 0.5818181818181818,
+    "best_threshold": 0.7700000000000001
+  },
+  {
+    "layer": 9,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8763888888888888,
+    "test_pr_auc": 0.6790990710881076,
+    "test_f1": 0.5882352941176471,
+    "best_threshold": 0.7300000000000001
+  },
+  {
+    "layer": 10,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8464197530864198,
+    "test_pr_auc": 0.6398323535508816,
+    "test_f1": 0.6206896551724138,
+    "best_threshold": 0.7400000000000001
+  },
+  {
+    "layer": 11,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8919753086419754,
+    "test_pr_auc": 0.6812113374022943,
+    "test_f1": 0.6095238095238096,
+    "best_threshold": 0.8000000000000002
+  },
+  {
+    "layer": 12,
+    "probe_type": "linear",
+    "test_roc_auc": 0.879537037037037,
+    "test_pr_auc": 0.6813045978605158,
+    "test_f1": 0.6306306306306306,
+    "best_threshold": 0.8000000000000002
+  },
+  {
+    "layer": 13,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8851543209876543,
+    "test_pr_auc": 0.697595505346481,
+    "test_f1": 0.631578947368421,
+    "best_threshold": 0.7900000000000001
+  },
+  {
+    "layer": 14,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9224382716049382,
+    "test_pr_auc": 0.7698199357673772,
+    "test_f1": 0.6601941747572816,
+    "best_threshold": 0.8200000000000002
+  },
+  {
+    "layer": 15,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9014814814814814,
+    "test_pr_auc": 0.7429706045993667,
+    "test_f1": 0.6972477064220184,
+    "best_threshold": 0.8100000000000002
+  },
+  {
+    "layer": 16,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9160802469135803,
+    "test_pr_auc": 0.7579501573642773,
+    "test_f1": 0.6666666666666666,
+    "best_threshold": 0.7900000000000001
+  },
+  {
+    "layer": 17,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9166049382716049,
+    "test_pr_auc": 0.7596972749262199,
+    "test_f1": 0.7027027027027027,
+    "best_threshold": 0.8300000000000002
+  },
+  {
+    "layer": 18,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9228703703703705,
+    "test_pr_auc": 0.782675994309121,
+    "test_f1": 0.7184466019417476,
+    "best_threshold": 0.8200000000000002
+  },
+  {
+    "layer": 19,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9339197530864197,
+    "test_pr_auc": 0.7810554918197395,
+    "test_f1": 0.7378640776699029,
+    "best_threshold": 0.8400000000000002
+  },
+  {
+    "layer": 20,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9036111111111111,
+    "test_pr_auc": 0.7681389684151535,
+    "test_f1": 0.6567164179104478,
+    "best_threshold": 0.7200000000000001
+  },
+  {
+    "layer": 21,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9194135802469136,
+    "test_pr_auc": 0.7694923909121969,
+    "test_f1": 0.7047619047619048,
+    "best_threshold": 0.8400000000000002
+  },
+  {
+    "layer": 22,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8883641975308643,
+    "test_pr_auc": 0.7401245501344886,
+    "test_f1": 0.7289719626168224,
+    "best_threshold": 0.8300000000000002
+  },
+  {
+    "layer": 23,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9017592592592593,
+    "test_pr_auc": 0.7406903284409163,
+    "test_f1": 0.7272727272727273,
+    "best_threshold": 0.8100000000000002
+  },
+  {
+    "layer": 24,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8851851851851852,
+    "test_pr_auc": 0.7248016362017671,
+    "test_f1": 0.6724137931034483,
+    "best_threshold": 0.8100000000000002
+  },
+  {
+    "layer": 25,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8995987654320987,
+    "test_pr_auc": 0.7313633406903343,
+    "test_f1": 0.6356589147286822,
+    "best_threshold": 0.7500000000000001
+  },
+  {
+    "layer": 26,
+    "probe_type": "linear",
+    "test_roc_auc": 0.8916049382716048,
+    "test_pr_auc": 0.7404106974345858,
+    "test_f1": 0.6722689075630253,
+    "best_threshold": 0.7800000000000001
+  },
+  {
+    "layer": 27,
+    "probe_type": "linear",
+    "test_roc_auc": 0.9069753086419753,
+    "test_pr_auc": 0.7436041719134064,
+    "test_f1": 0.6896551724137931,
+    "best_threshold": 0.8000000000000002
+  },
+  {
+    "layer": 28,
+    "probe_type": "linear",
+    "test_roc_auc": 0.912962962962963,
+    "test_pr_auc": 0.7407359736277238,
+    "test_f1": 0.7047619047619048,
+    "best_threshold": 0.8800000000000001
+  }
+]
