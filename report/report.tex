@@ -66,19 +66,18 @@ carry sufficient signal to detect harmful and jailbreak prompts as anomalies, wi
 any fine-tuning. Using \texttt{Qwen2.5-1.5B} as a frozen feature extractor, we extract
 hidden-state vectors across all 28 transformer layers and train lightweight linear probes
 on an imbalanced dataset (90\% normal, 10\% harmful) derived from WildGuardMix.
-With last-token pooling, our best model (layer 19) achieves a test ROC-AUC of \textbf{0.934}
-and PR-AUC of \textbf{0.781}; switching to mean pooling further improves performance, with
-the best mean-pool layer (layer 15) reaching ROC-AUC \textbf{0.960} and PR-AUC \textbf{0.842}.
 Both substantially outperform a TF-IDF + Logistic Regression text baseline (ROC-AUC 0.877,
-PR-AUC 0.652). A full 28-layer sweep reveals that safety signal peaks at layer 19 for
-last-token pooling (layer 15 for mean pooling) and does not increase monotonically with depth,
+PR-AUC 0.652). A full 28-layer sweep reveals that safety signal peaks at mid-to-upper layers
+and does not increase monotonically with depth,
 consistent with intermediate layers encoding richer semantic content than late layers.
-A systematic hyperparameter sweep over positive class weight, learning rate, and weight
-decay confirms that upweighting the harmful minority class more aggressively
-(\texttt{pos\_weight}$=9.0$) yields further gains (ROC-AUC 0.942, PR-AUC 0.797).
+In an extended experiment scaling training data to 7{,}000 examples, our best configuration
+(mean pooling, layer 19) achieves ROC-AUC \textbf{0.971} and PR-AUC \textbf{0.887} on the
+internal test set, and \textbf{ROC-AUC 0.889} on the held-out \textbf{WildGuardTest}
+benchmark --- confirming that the safety signal generalises to a genuinely independent
+evaluation set.
 We also compare a one-class Mahalanobis anomaly detector (trained on benign samples only)
-and conduct ablations over probe architecture, pooling strategy, and training set balance.
-Training dynamics and failure cases are documented.
+and conduct ablations over probe architecture, pooling strategy, training set size, and
+class balance. Training dynamics and failure cases are documented.
 \end{abstract}
 
 \tableofcontents
@@ -115,6 +114,7 @@ The main contributions of this project are:
   \item A reproducible pipeline for extraction, training, and evaluation of activation probes.
   \item An empirical layer-sweep showing where safety signal emerges in a 1.5B-parameter transformer.
   \item Comparison of supervised probe, text baseline, and one-class anomaly detection.
+  \item An extended experiment scaling training data and evaluating on the independent WildGuardTest benchmark (ROC-AUC 0.889).
   \item Honest documentation of failure modes and calibration limitations.
 \end{itemize}
 
@@ -350,28 +350,29 @@ approximately 40 minutes per pooling method ($\sim$80 min total). The extended v
 \centering
 \caption{Test set performance of all methods. Best value in each column is \textbf{bold}.
          F1 is computed at the optimal threshold selected on the validation set.
-         $\dagger$ One-class detector is trained on benign samples only.}
+         $\dagger$ One-class detector trained on benign samples only.}
 \label{tab:main_results}
-\begin{tabular}{lccc}
+\begin{tabular}{llllccc}
 \toprule
-Method & ROC-AUC & PR-AUC & F1 (harmful) \\
+Method & Layer & Pooling & Probe & ROC-AUC & PR-AUC & F1 \\
 \midrule
-TF-IDF + LogReg (text baseline) & 0.877 & 0.652 & 0.589 \\
+TF-IDF + LogReg (text baseline) & --- & --- & --- & 0.877 & 0.652 & 0.589 \\
 \midrule
-Activation probe, Layer 4  (early),      Linear  (last-token) & 0.848 & 0.664 & 0.615 \\
-Activation probe, Layer 14 (mid),        Linear  (last-token) & 0.922 & 0.770 & 0.660 \\
-Activation probe, Layer 14 (mid),        MLP     (last-token) & 0.912 & 0.728 & 0.636 \\
-Activation probe, Layer 19 (upper-mid),  Linear (last-token)  & 0.934 & 0.781 & 0.738 \\
-Activation probe, Layer 26 (late),       Linear  (last-token) & 0.892 & 0.740 & 0.672 \\
+Activation probe & L4  & last-token & Linear & 0.848 & 0.664 & 0.615 \\
+Activation probe & L14 & last-token & Linear & 0.922 & 0.770 & 0.660 \\
+Activation probe & L14 & last-token & MLP    & 0.912 & 0.728 & 0.636 \\
+Activation probe & L19 & last-token & Linear & 0.934 & 0.781 & 0.738 \\
+Activation probe & L26 & last-token & Linear & 0.892 & 0.740 & 0.672 \\
 \midrule
-Activation probe, Layer 19 (upper-mid),  Linear (mean pool)  & 0.930 & 0.809 & 0.779 \\
-Activation probe, Layer 15 (mid-upper),  Linear (mean pool, sweep best) & \textbf{0.960} & \textbf{0.842} & 0.743 \\
+Activation probe & L19 & mean pool  & Linear & 0.930 & 0.809 & 0.779 \\
+Activation probe & L15 & mean pool  & Linear & \textbf{0.960} & \textbf{0.842} & 0.743 \\
 \midrule
-One-class Mahalanobis, Layer 14$^\dagger$ & 0.705 & 0.180 & \textbf{n/a}$^{\ddagger}$ \\
+One-class Mahalanobis$^\dagger$ & L14 & last-token & --- & 0.705 & 0.180 & n/a$^{\ddagger}$ \\
 \bottomrule
 \end{tabular}
 \vspace{0.4em}
-\footnotesize{$^{\ddagger}$One-class F1 is computed at the 95th-percentile benign threshold; not directly comparable to supervised probes.}
+
+\footnotesize{$^{\ddagger}$One-class F1 computed at 95th-percentile benign threshold; not directly comparable to supervised probes.}
 \end{table}
 
 With last-token pooling, the best probe (layer 19) outperforms the TF-IDF baseline
@@ -1149,6 +1150,10 @@ Adversarial subgroup recall   & \texttt{subgroup\_adversarial\_recall.png} & NB 
 % ── 8.7 Saved Artifacts ───────────────────────────────────────────────────────
 \subsection{Saved Artifacts}
 
+All code, notebooks, and scripts are publicly available at:
+\url{https://github.com/brian-w-zhang/DL-Project}
+
+
 \begin{table}[H]
 \centering
 \caption{Key saved artifacts for reproducibility.}
@@ -1287,34 +1292,34 @@ samples) is more reliable despite being slightly lower, and the layer shift from
 
 We demonstrated that lightweight linear probes trained on frozen activations of
 Qwen2.5-1.5B reliably detect harmful and jailbreak prompts, substantially
-outperforming a strong TF-IDF text baseline. With last-token pooling, the best
-probe (layer 19) achieves ROC-AUC 0.934 and PR-AUC 0.781; switching to mean
-pooling and selecting the optimal depth (layer 15) raises these to
-ROC-AUC \textbf{0.960} and PR-AUC \textbf{0.842}, representing a $+0.026$ /
-$+0.061$ improvement over last-token.
+outperforming a strong TF-IDF text baseline. In our extended experiment with 7{,}000
+training examples, the best configuration (mean pooling, layer 19) achieves
+ROC-AUC \textbf{0.971} and PR-AUC \textbf{0.887} on the internal test set, and
+\textbf{ROC-AUC 0.889} on the held-out WildGuardTest benchmark, confirming meaningful
+generalisation to a genuinely independent evaluation set. Mean pooling consistently
+outperforms last-token pooling across both data scales, with a $+0.037$ / $+0.104$
+ROC/PR-AUC improvement at the larger data scale (v2: mean-pool L19 vs last-token L26).
 
-The full 28-layer sweep reveals that safety signal peaks at layer 19 for
-last-token pooling and at layer 15 for mean pooling, with a non-monotonic profile:
-weak in early layers, plateauing through mid-to-upper layers, then degrading
-as late layers shift toward next-token prediction. A hyperparameter sweep
-confirms that increasing the positive class weight from 3.0 to 9.0 yields
-further gains (ROC-AUC 0.942, PR-AUC 0.797), indicating that more aggressive
+The full 28-layer sweep reveals a non-monotonic profile: safety signal is weak in early
+layers, plateaus through mid-to-upper layers (peaking around layer 19--26 depending on
+pooling and data scale), then degrades as late layers shift toward next-token prediction.
+A hyperparameter sweep confirms that increasing the positive class weight from 3.0 to 9.0
+yields further gains (ROC-AUC 0.942, PR-AUC 0.797), indicating that more aggressive
 minority-class upweighting is beneficial at the 10:1 imbalance ratio.
 
 The linear probe outperforming the MLP provides evidence that the harmful/benign
 boundary is approximately linear in mid-to-upper-layer activation space, consistent
 with representation engineering literature. Training curves confirm fast convergence
 (best epoch typically 10--25), with early stopping (patience=7 on val PR-AUC)
-preventing overfitting to the small 300-example harmful set. The one-class
-Mahalanobis experiment confirms harmful prompts are genuinely out-of-distribution
-in activation space even without any harmful training labels (ROC-AUC 0.705).
+preventing overfitting. The one-class Mahalanobis experiment confirms harmful prompts
+are genuinely out-of-distribution in activation space even without any harmful training
+labels (ROC-AUC 0.705).
 
-The primary remaining limitations are the small minority training set (300 examples),
-threshold calibration sensitivity to \texttt{pos\_weight}, and vulnerability to
-socially nuanced harm categories (``others'', stereotypes). Future work could
-explore multi-layer feature concatenation, cross-dataset generalisation, temperature
-scaling for probability calibration, and robustness against paraphrase-based and
-obfuscation attacks.
+Remaining limitations include threshold calibration sensitivity to \texttt{pos\_weight},
+vulnerability to socially nuanced harm categories (``others'', stereotypes), and the
+generalisation gap to WildGuardTest ($-0.082$ ROC-AUC from internal to external test).
+Future work could explore multi-layer feature concatenation, temperature scaling for
+probability calibration, and robustness against paraphrase-based and obfuscation attacks.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section*{Team Contributions}
