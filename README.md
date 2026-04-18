@@ -61,7 +61,7 @@ Outputs land in `data/processed/wildguardmix_imbalance/` (`train.csv`, `val.csv`
 
 ## Step 1: Extract activation features  *(skip if using Drive artifacts)*
 
-Runs Qwen2.5-1.5B (downloaded automatically from Hugging Face on first run, ~3 GB) and saves hidden-state vectors per layer. Use a GPU — extraction takes ~60 min per pooling strategy on a Colab T4, or ~40 min on Apple MPS.
+Runs Qwen2.5-1.5B (downloaded automatically from Hugging Face on first run, ~3 GB) and saves hidden-state vectors per layer. Use a GPU — the v2 dataset (7,000 training examples + WildGuardTest) takes ~60 min per pooling strategy on a Colab T4. The earlier v1 experiment (3,000 examples) was extracted locally in ~40 min per strategy on Apple MPS.
 
 ```bash
 # Last-token pooling, all 29 layers (used for main results)
@@ -170,4 +170,4 @@ The checkpoint at `outputs/checkpoints/qwen2.5-1.5b_layer19_linear.pt` is the v1
 └── requirements.txt
 ```
 
-`data/`, `features/`, and `outputs/` are gitignored. Download from Google Drive link above.
+`data/` is fully gitignored. Within `features/`, the activation tensor files (`*.pt`) are gitignored. Within `outputs/`, checkpoint files (`*.pt`) are gitignored — figures and metrics JSONs are tracked. Download the large artifacts from Google Drive link above.
