@@ -8,6 +8,8 @@ We investigate whether frozen LLM internal activations can detect harmful and ja
 **GitHub:** https://github.com/brian-w-zhang/DL-Project  
 **Pre-built artifacts (features, checkpoints, data):** https://drive.google.com/drive/folders/14Yj8SMPvBkft1TrUVPoHSoe5n05mNBwx?usp=sharing
 
+**Scope note:** The final project topic is a pivot from our initial proposal (`report/outdated_proposal.pdf`). After a feasibility pass, we concluded the original problem framing was too ambiguous to support clear evaluation and that results would likely fall short of what we wanted. The direction documented here still centres on **anomaly detection** (harmful / jailbreak prompts as anomalies in activation space) and meets that requirement for the course.
+
 ---
 
 ## Quickest path to reproducing results
