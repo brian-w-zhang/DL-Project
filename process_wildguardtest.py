@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -28,7 +29,7 @@ def main() -> None:
 
     in_path = Path(args.input_hf_path)
     out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
 
     print(f"Loading WildGuardTest from {in_path} ...")
     ds = load_from_disk(str(in_path))

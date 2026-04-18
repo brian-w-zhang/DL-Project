@@ -170,7 +170,7 @@ def train_one_layer(
 # Plot
 # ---------------------------------------------------------------------------
 
-def plot_sweep(results: list[dict], probe_type: str) -> None:
+def plot_sweep(results: list[dict], probe_type: str, slug_suffix: str = "") -> None:
     results = sorted(results, key=lambda r: r["layer"])
     layers   = [r["layer"]        for r in results]
     roc_aucs = [r["test_roc_auc"] for r in results]
@@ -209,7 +209,7 @@ def plot_sweep(results: list[dict], probe_type: str) -> None:
     )
     plt.tight_layout()
 
-    out = PATHS["figures"] / f"full_layer_sweep_{probe_type}.png"
+    out = PATHS["figures"] / f"full_layer_sweep_{probe_type}{slug_suffix}.png"
     plt.savefig(out, bbox_inches="tight")
     plt.close()
     print(f"Saved -> {out}")
@@ -277,7 +277,7 @@ def main() -> None:
         json.dump(results, f, indent=2)
     print(f"Summary -> {summary_path}")
 
-    plot_sweep(results, args.probe_type)
+    plot_sweep(results, args.probe_type, slug_suffix)
 
 
 if __name__ == "__main__":
