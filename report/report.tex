@@ -338,7 +338,7 @@ metrics are primary:
 \end{itemize}
 
 \paragraph{Hardware.} Feature extraction ran on Apple MPS (M-series chip) in
-approximately 25 minutes. Probe training runs on CPU in under 1 minute per configuration.
+approximately 40 minutes per pooling method ($\sim$80 min total). The extended v2 extraction on a Colab T4 GPU took approximately 60 minutes per method ($\sim$120 min total), despite the larger dataset, reflecting the GPU throughput advantage at batch size 32. Probe training runs on CPU in under 1 minute per configuration.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Results}
@@ -1167,6 +1167,120 @@ Path & Contents \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Extended Experiment: Scaling Training Data}
+\label{sec:extended}
+
+\subsection{Motivation}
+
+Section~\ref{sec:limitations} identified the small harmful training set (300 examples)
+as the primary bottleneck. To investigate whether this limitation was binding, we scaled
+up the training data and re-evaluated under the same probe architecture and hyperparameters.
+We also introduce an external evaluation on the official \textbf{WildGuardTest} benchmark
+\citep{wildguard}, which uses a separate human multi-annotator labelling process and was
+never seen during training or threshold tuning.
+
+\subsection{Experimental Setup}
+
+\begin{table}[H]
+\centering
+\caption{v1 vs v2 dataset configuration.}
+\label{tab:v1v2}
+\begin{tabular}{lll}
+\toprule
+ & v1 (original) & v2 (extended) \\
+\midrule
+Harmful train examples  & 300   & 700 \\
+Total train             & 3,000 & 7,000 \\
+Internal test (harmful) & 600 (60)   & 2,000 (200) \\
+External test           & ---   & WildGuardTest: 1,699 rows (754 harmful) \\
+Split design            & 90:10 imbalance & 70/10/20 train/val/test, 90:10 imbalance \\
+Extraction hardware     & Apple MPS ($\sim$40 min/method, $\sim$80 min total) & Colab T4 GPU ($\sim$60 min/method, $\sim$120 min total) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All other settings (Qwen2.5-1.5B frozen, linear probe, AdamW, $w_+=3.0$,
+early stopping on val PR-AUC) are identical to v1.
+
+\subsection{Layer Sweep}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{../outputs/figures/layer_sweep_all_configs.png}
+  \caption{Layer sweep ROC-AUC and PR-AUC for all four configurations
+           (v1/v2 $\times$ last-token/mean-pool). Solid lines = last-token,
+           dashed = mean-pool; blue = v1, orange = v2.}
+  \label{fig:sweep_all}
+\end{figure}
+
+Figure~\ref{fig:sweep_all} reveals two notable shifts relative to v1:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Last-token peak shifts from layer 19 to layer 26.} With more training
+        data, the probe can leverage signal from deeper layers that previously overfitted
+        on only 300 harmful examples.
+  \item \textbf{Mean-pool peak returns to layer 19} (was layer 15 in v1). The v2
+        mean-pool curve is uniformly higher than v1, and its plateau is broader,
+        suggesting more stable generalisation across mid-to-late layers.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{All four configurations on their internal test sets and WildGuardTest (external).
+         Internal test sizes differ: v1 = 60 harmful, v2 = 200 harmful.
+         PR-AUC is not directly comparable across test sets due to different class
+         prevalence (10\% internal vs 44\% WildGuardTest).
+         \textbf{Bold} = best in each column.}
+\label{tab:all_configs}
+\begin{tabular}{lcccccc}
+\toprule
+Config & \multicolumn{3}{c}{Internal test} & \multicolumn{2}{c}{WildGuardTest (external)} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-6}
+ & ROC-AUC & PR-AUC & F1 & ROC-AUC & PR-AUC \\
+\midrule
+v1 last-token L19 & 0.934 & 0.781 & 0.738 & --- & --- \\
+v1 mean-pool  L15 & 0.961 & 0.842 & 0.743 & --- & --- \\
+v2 last-token L26 & 0.929 & 0.783 & 0.694 & 0.865 & 0.870 \\
+v2 mean-pool  L19 & \textbf{0.971} & \textbf{0.887} & \textbf{0.810} & \textbf{0.889} & \textbf{0.889} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.90\linewidth]{../outputs/figures/roc_pr_v2_meanpool_internal_vs_external.png}
+  \caption{ROC and PR curves for the best v2 configuration (mean-pool L19) on the
+           internal test set and WildGuardTest. The gap between curves reflects
+           expected OOD generalisation loss and the difference in class prevalence
+           between the two test sets.}
+  \label{fig:v2_roc_pr}
+\end{figure}
+
+\subsection{Discussion}
+
+\paragraph{More data helped, but not uniformly.}
+Mean-pool improves substantially with more training data: PR-AUC rises from 0.842 to
+0.887 on the internal test. Last-token gains are marginal on the internal test (0.783
+vs 0.781). This asymmetry suggests mean pooling is more sample-efficient at capturing
+safety signal across the full prompt, and benefits more from additional harmful examples.
+
+\paragraph{WildGuardTest reveals a generalisation gap.}
+The internal test (drawn from the same WildGuardTrain distribution) yields higher
+ROC-AUC than WildGuardTest for both v2 configurations (e.g., mean-pool: 0.971 vs
+0.889). This gap is expected --- WildGuardTest uses a different annotation pipeline
+and contains a different harm-category distribution. Despite the gap, ROC-AUC 0.889
+on WildGuardTest confirms that the safety signal generalises meaningfully to a
+genuinely held-out benchmark.
+
+\paragraph{v1 ROC-AUC was optimistic.}
+The v1 numbers (0.934 at L19, 60 harmful test samples) were estimated on a small,
+potentially lucky split. The v2 internal estimate (0.929 at L26, 200 harmful test
+samples) is more reliable despite being slightly lower, and the layer shift from
+19 to 26 indicates that the v1 peak was partially an artefact of the small test set.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Conclusion}
