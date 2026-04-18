@@ -1,0 +1,8 @@
+{
+  "layer": 9,
+  "probe_type": "linear",
+  "test_roc_auc": 0.9215740740740741,
+  "test_pr_auc": 0.7466436901899838,
+  "test_f1": 0.6942148760330579,
+  "best_threshold": 0.7000000000000002
+}
