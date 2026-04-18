@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-Create imbalanced train/val/test splits from WildGuardMix.
+Create imbalanced train/val/test splits from WildGuardMix (WildGuardTrain only).
 
 Default label mapping:
 - normal (0): prompt_harm_label == "unharmful"
 - abnormal (1): prompt_harm_label == "harmful"
 
+Default split (90:10 imbalance, 70/10/20 train/val/test of 10k total):
+  train: 7000 (700 harmful, 6300 benign)
+  val:   1000 (100 harmful, 900 benign)
+  test:  2000 (200 harmful, 1800 benign)  <- internal test, same distribution
+
+For the external benchmark test use process_wildguardtest.py to generate test_external.csv.
+
 Usage:
   python3 make_imbalance_split.py
-  python3 make_imbalance_split.py --ratio_normal_to_abnormal 9 --train_abnormal 200 --val_abnormal 40 --test_abnormal 40
+  python3 make_imbalance_split.py --ratio_normal_to_abnormal 9 --train_abnormal 700 --val_abnormal 100 --test_abnormal 200
 """
 
 from __future__ import annotations
@@ -36,9 +43,9 @@ def main() -> None:
     parser.add_argument("--input_hf_path", type=str, default="data/raw/wildguardmix/wildguardtrain_hf")
     parser.add_argument("--out_dir", type=str, default="data/processed/wildguardmix_imbalance")
     parser.add_argument("--ratio_normal_to_abnormal", type=int, default=9, help="9 means 90:10")
-    parser.add_argument("--train_abnormal", type=int, default=200)
-    parser.add_argument("--val_abnormal", type=int, default=40)
-    parser.add_argument("--test_abnormal", type=int, default=40)
+    parser.add_argument("--train_abnormal", type=int, default=700)
+    parser.add_argument("--val_abnormal", type=int, default=100)
+    parser.add_argument("--test_abnormal", type=int, default=200)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

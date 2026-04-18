@@ -27,7 +27,7 @@ from utils import (
     set_seed,
 )
 
-SPLITS = ["train", "val", "test"]
+DEFAULT_SPLITS = ["train", "val", "test", "test_external"]
 
 
 def pool_hidden(hidden: torch.Tensor, attention_mask: torch.Tensor, method: str) -> torch.Tensor:
@@ -54,7 +54,12 @@ def extract_all(
     max_length: int,
     seed: int,
     out_slug: str | None = None,
+    splits: list[str] | None = None,
 ) -> None:
+    active_splits = splits if splits is not None else DEFAULT_SPLITS
+    # Skip splits whose CSV doesn't exist yet (e.g. test_external before wildguardtest processing)
+    active_splits = [s for s in active_splits if (PATHS["data_processed"] / f"{s}.csv").exists()]
+
     set_seed(seed)
     device = get_device()
     slug = out_slug or MODEL_SLUG
@@ -83,7 +88,7 @@ def extract_all(
     with open(config_path, "w") as f:
         json.dump(config_out, f, indent=2)
 
-    for split in SPLITS:
+    for split in active_splits:
         print(f"\n--- Split: {split} ---")
         prompts, labels = load_split(split)
         n = len(prompts)
@@ -132,6 +137,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out_slug", type=str, default=None,
                         help="Override save slug (default: model slug). Use to avoid overwriting existing features.")
+    parser.add_argument("--splits", nargs="+", type=str, default=None,
+                        help=f"Splits to extract (default: {DEFAULT_SPLITS}). Missing CSVs are skipped.")
     args = parser.parse_args()
 
     extract_all(
@@ -141,6 +148,7 @@ def main() -> None:
         max_length=args.max_length,
         seed=args.seed,
         out_slug=args.out_slug,
+        splits=args.splits,
     )
 
 
