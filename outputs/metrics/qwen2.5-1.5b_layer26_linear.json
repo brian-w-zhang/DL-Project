@@ -3,8 +3,8 @@
   "layer": 26,
   "probe_type": "linear",
   "best_epoch": 8,
-  "val_roc_auc": 0.9459259259259258,
-  "val_pr_auc": 0.7654802574180436,
+  "val_roc_auc": 0.945925925925926,
+  "val_pr_auc": 0.7654802574180437,
   "test_roc_auc": 0.8916049382716048,
   "test_pr_auc": 0.7404106974345858,
   "best_threshold": 0.7800000000000001,
@@ -14,6 +14,7 @@
     "weight_decay": 0.0001,
     "pos_weight": 3.0,
     "batch_size": 64,
-    "seed": 42
+    "seed": 42,
+    "harmful_frac": null
   }
 }
