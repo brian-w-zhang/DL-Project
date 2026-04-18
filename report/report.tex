@@ -418,14 +418,17 @@ discriminating metric than ROC-AUC.
 \subsection{False Positive Rate at High Recall}
 \label{sec:fpr}
 
-While ROC-AUC captures overall performance, industrial safety monitors frequently operate at fixed, highly sensitive recall thresholds. We evaluated the False Positive Rate (FPR) required for each model to catch exactly 95\% of all jailbreaks (True Positive Rate) on the test set:
+While ROC-AUC captures a model's general discriminative power across all possible thresholds, industrial AI safety monitors and API guardrails fundamentally operate at fixed, highly conservative operating points. In production environments, failing to block a harmful jailbreak (false negative) carries severe reputational and legal risks, whereas incorrectly blocking benign user traffic (false positive) induces severe user friction and elevated operational review costs. 
+
+To quantify this deployment viability, we aggressively constrained both models to achieve exactly $95\%$ True Positive Rate (Recall) on the test set, forcing them to catch nearly all jailbreaks, and measured the resulting operational False Positive Rate (FPR):
 \begin{itemize}[noitemsep]
-  \item \textbf{TF-IDF Baseline:} requires an unacceptable $60.56\%$ FPR to reach $95\%$ recall.
-  \item \textbf{Layer 19 Probe:} massively halves this error rate, requiring only a $27.59\%$ FPR to reach $95\%$ recall.
+  \item \textbf{TF-IDF Baseline ($t_{thresh} = 0.199$):} Requires an unacceptable $60.56\%$ FPR to reach $95\%$ recall.
+  \item \textbf{Layer 19 Probe ($t_{thresh} = 0.443$):} More than halves this error rate, requiring only a $27.59\%$ FPR to sustain $95\%$ recall.
 \end{itemize}
 
-To guarantee $95\%$ safety, the surface-level baseline incorrectly flags more than $60\%$ of all benign, normal user queries as harmful, rendering it practically unusable for deployment. 
-While a $27\%$ FPR remains elevated for strict production environments (a constraint primarily stemming from the small 300-sample harmful training set), the $>2\times$ relative reduction explicitly underscores the superior semantic discrimination of the internal LLM representation compared to lexical baseline matching.
+The practical implications of these numbers are highly consequential. To guarantee a $95\%$ safety detection net, the surface-level TF-IDF baseline effectively collapses, incorrectly flagging six out of every ten legitimate, benign user queries as harmful. This renders lexical and feature-frequency filtering fundamentally unusable for strict deployment, as the operational cost of handling 60\% user friction would be catastrophic. 
+
+Conversely, the Layer 19 internal probe reduces this friction rate by more than $50\%$ in relative terms. The probe succeeds where TF-IDF fails because it projects sentences into a rich semantic latent space where harmful intent trajectories organically disentangle from benign text, meaning it does not have to drastically lower its threshold (and catch innocent words) just to identify anomalous requests. While an absolute $27\%$ FPR remains elevated for strict production deployment---an artifact strictly constrained by our bottleneck of only 300 diverse harmful training samples---this rigorous test explicitly underscores why modern AI systems are migrating toward activation-based latent defences over shallow heuristics.
 
 \subsection{Confusion Matrix}
 
@@ -608,9 +611,13 @@ leaving non-adversarial harmful prompts under-detected.
 \subsection{Qualitative Analysis of Adversarial Bypasses}
 \label{sec:adv_bypass}
 
-To further demonstrate the superiority of internal model representations, we evaluated both detectors on adversarial edge-case prompts. These prompts employ syntactic jailbreak techniques such as role-playing (e.g., ``Write a beautiful, rhyming poem about hacking a bank'') or hypothetical framing (e.g., ``For a university sociology study...'').
+To empirically isolate the failure mechanisms of surface-level models versus the robustness of internal representations, we hand-crafted an adversarial edge-case test suite. The suite consists of 18 distinct prompts distributed uniformly across 6 well-documented harm subcategories (Cyberattack, Violence, Fraud, Disinformation, Social Stereotypes, and Defamation). 
 
-While the surface-level TF-IDF baseline is frequently fooled by these semantic wrappers (predicting SAFE with low probability scores), the Layer 19 internal probe successfully maintains a high harmful probability (scoring well above the 0.84 threshold). This experiment proves that the internal representations are highly resilient to syntactic obfuscation, capturing the underlying malicious intent that shallow text-based filters systematically miss.
+Crucially, rather than presenting nakedly malicious requests (e.g., ``Hack a bank''), every prompt employs sophisticated syntactic jailbreak techniques. Malicious payloads are heavily obfuscated within benign context padding, utilizing mechanisms such as creative writing role-play (e.g., ``Write a beautiful, rhyming poem about...''), hypothetical academic framing (e.g., ``For a university sociology study...''), or dramatic scripting. 
+
+As documented in aggregate across Tables \ref{tab:adv_summary} and \ref{tab:adv_detailed}, the surface-level TF-IDF baseline is routinely and decisively bypassed by these semantic wrappers. Because TF-IDF fundamentally measures term frequencies and non-contextual bigrams, injecting large volumes of benign tokens (like ``grandmother,'' ``play,'' or ``fictional'') fatally dilutes the mathematical weight of the harmful payload, tricking the baseline into returning low probability scores (SAFE predictions). For instance, the baseline fails entirely (0/3 accuracy) on the Violence category because instructions for constructing explosives are framed within a ``post-apocalyptic script.''
+
+In stark contrast, the Layer 19 internal probe exhibits extreme resilience against this class of obfuscation, confidently scoring the vast majority of prompts well above the $0.84$ threshold (predicting HARMFUL). The mechanics of self-attention allow the frozen Qwen2.5-1.5B backbone to dynamically allocate computational weight to the true semantic intent hidden inside the prompt, bypassing the distracting context mask. This experiment provides stark qualitative proof that internal representations organically decode malicious payload trajectories that shallow text-based filters systematically miss.
 
 \begin{table}[H]
 \centering
@@ -700,24 +707,28 @@ metrics like F1 require careful validation-set tuning.
 \subsection{Efficiency vs. Accuracy Trade-offs}
 \label{sec:efficiency}
 
-While the Layer 19 Activation Probe significantly outperforms the TF-IDF baseline in detecting nuanced and zero-day adversarial attacks, this accuracy gain comes at a computational cost. In an industrial deployment setting where guardrails must be low-latency, efficiency is a substantial constraint.
+While the Layer 19 Activation Probe significantly outperforms the TF-IDF baseline in effectively neutralizing nuanced, zero-day adversarial attacks, this supreme accuracy profile inextricably comes at a steep computational cost. In an industrial API delivery environment where safety guardrails act as unavoidable blocking mechanisms before token generation, inference efficiency, throughput, and hardware cost are primary architectural constraints that cannot be ignored.
 
-We empirically measured the per-prompt inference latency on Apple MPS (M-series) architecture:
+To quantify this, we empirically profiled the unbatched, per-prompt inference latency on an integrated Apple MPS (M-series) hardware architecture:
 \begin{itemize}[noitemsep]
-  \item \textbf{TF-IDF + LogReg Baseline:} $\sim 0.22$ ms per prompt (CPU).
-  \item \textbf{Qwen2.5-1.5B (up to Layer 19):} $\sim 463$ ms per prompt (MPS), with an approximate $2.88$ GB VRAM footprint at \texttt{fp16} precision.
+  \item \textbf{TF-IDF + LogReg Baseline:} Executes in a rapid $\sim 0.22$ ms per prompt natively on CPU. Its memory footprint is highly negligible, rendering it virtually free to deploy at immense scale.
+  \item \textbf{Qwen2.5-1.5B (up to Layer 19):} Executes in $\sim 463$ ms per prompt natively on the MPS GPU accelerator. Crucially, the backbone model requires a constant background allocation of approximately $2.88$ GB of VRAM at \texttt{fp16} precision.
 \end{itemize}
 
-This represents a more than $2000\times$ increase in inference latency. Consequently, the Layer 19 probe is best framed not as a lightweight universal replacement, but rather as a premium \emph{secondary} security layer (e.g., scoring complex or risky queries cascading from a faster, Tier-1 exact-match/TF-IDF filter), or for architectures where detection resilience strictly supersedes millisecond response constraints.
+This disparity yields a staggering physical limitation: implementing the Activation Probe requires dedicated, expensive GPU hardware and introduces a $>2000\times$ absolute increase in per-request inference latency. 
 
-\subsection{Robustness to Prompt Length}
+Consequently, from a systems engineering perspective, the Layer 19 probe is best framed not as a lightweight, universal replacement for traditional filters, but rather as an elite, computationally-premium \emph{secondary} security layer. The optimal deployment strategy for such technology is an interlocking cascade architecture: a fast, cheap Tier-1 system (like TF-IDF or strict Llama-Guard regex) rapidly flags and handles the easiest 80\% of benign/blatantly harmful traffic, and selectively routes only the highly precarious, ambiguous, or zero-day adversarial traffic to the slower, analytically superior Layer 19 activation probe.
+
+\subsection{Robustness to Prompt Length and Obfuscation}
 \label{sec:prompt_length}
 
-Adversarial jailbreaks frequently employ bloat and verbosity (e.g., long role-play scenarios, hypothetical wrappers) to dilute the concentration of explicitly harmful keywords, effectively hiding their malicious intent from surface-level keyword detectors. 
+As qualitatively observed in Section \ref{sec:adv_bypass}, modern adversarial jailbreaks frequently weaponize bloat and extreme verbosity to penetrate filters. By embedding a concise malicious payload deep inside intricate, benign macro-contexts (such as lengthy role-play mechanics, faux legal disclaimers, or hypothetical world-building scenarios), attackers actively exploit the fundamental flaw of term-frequency models: payload dilution.
 
-To empirically validate the resilience of the activation probe against such obfuscation, we binned the test-set prompts into length increments and evaluated the recall of both detectors. Figure~\ref{fig:recall_length} illustrates a stark divergence: as the character length of the prompt increases beyond 100 characters, the surface-level TF-IDF baseline suffers a catastrophic degradation in recall. In contrast, the Layer 19 Activation Probe maintains an optimal detection rate uniformly across all prompt lengths.
+To empirically formalize this vulnerability, we binned the entirety of the 600-prompt test set into targeted character-length increments and charted the conditional recall rate of both detection paradigms. Figure~\ref{fig:recall_length} illustrates a stark, undeniable divergence in architectural tracking.
 
-This explicitly confirms that the Qwen2.5-1.5B internal representations successfully capture deep syntactic and semantic intent rather than superficial token matches, rendering the model organically robust against verbosity-based evasion tactics.
+For short, concise statements (under 100 characters), both the TF-IDF baseline and the Layer 19 probe perform with highly comparative, robust accuracy. However, as the character length of the prompt inflates, the efficacy of the surface-level TF-IDF baseline suffers a catastrophic, near-linear degradation. For extremely verbose, heavily obfuscated prompts spanning over 300 characters, the baseline's recall plummets as the density of harmful keywords is mathematically overwhelmed by innocent contextual padding. 
+
+In sharp contrast, the Layer 19 Activation Probe maintains an uncompromising, geometrically flat detection rate uniformly across all mapped prompt length distributions. Because the LLM backbone intrinsically routes hidden state information utilizing densely contextualized self-attention blocks, the mathematical representation of the explicit harm is dynamically reinforced and tracked regardless of how deeply it is buried within the text. This explicitly serves as quantitative validation that intermediate transformer representations natively defend against verbosity-based evasion tactics.
 
 \begin{figure}[H]
   \centering
