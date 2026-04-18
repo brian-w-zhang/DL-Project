@@ -1,268 +1,173 @@
-# Deep Learning Project
+# Activation-Based Jailbreak Anomaly Detection
 
-Code and materials for an activation-probe study on harmful vs benign prompts (frozen **Qwen2.5-1.5B**). The write-up lives in `report/report.tex`; raw numbers and figures are under `outputs/`.
+**50.039 Deep Learning, Y2026 — Sabrina Wang, Brian Zhang, Albert Nguyen-Tran**
+
+We investigate whether frozen LLM internal activations can detect harmful and jailbreak prompts as anomalies, without fine-tuning. Using **Qwen2.5-1.5B** as a feature extractor, we train lightweight linear probes on hidden-state vectors across all 28 transformer layers on an imbalanced dataset (90:10 benign:harmful). Our best model achieves **ROC-AUC 0.971** on the internal test set and **ROC-AUC 0.889** on the held-out WildGuardTest benchmark.
+
+**Report:** `report/report.pdf`  
+**GitHub:** https://github.com/brian-w-zhang/DL-Project  
+**Pre-built artifacts (features, checkpoints, data):** https://drive.google.com/drive/folders/14Yj8SMPvBkft1TrUVPoHSoe5n05mNBwx?usp=sharing
 
 ---
 
-## For teammates (catch up quickly)
+## Quickest path to reproducing results
 
-**If someone shares pre-built artifacts on Drive** (recommended so you skip slow steps):
+The feature extraction step requires a GPU and takes ~60 minutes per pooling strategy. **To skip it**, download the pre-built artifacts from Google Drive (link above) and place them in the repo root:
 
-1. Clone this repo and create the venv (see [Environment](#environment)).
-2. Download and merge into the project root so paths match:
-   - **`features/`** — pre-extracted activation tensors (`qwen2.5-1.5b/layer_*`, etc.). With this in place you **do not** need to run `extract_features.py` or download the base LM for extraction.
-   - **`data/processed/wildguardmix_imbalance/`** — optional but useful for EDA / baselines / reproducing CSV-based steps (`baselines.py`, `01_eda.ipynb`).
-   - **`outputs/`** — optional; if included, notebooks can show numbers immediately. If missing, generate metrics by running the scripts below.
-
-**What to run when `features/` for all layers is already there:**
-
-```bash
-python src/baselines.py
-python src/sweep_all_layers.py --probe_type linear
-python src/train_probe.py --layer 19 --probe_type linear
-python src/train_probe.py --layer 14 --probe_type mlp
-python src/one_class.py --layer 14
+```
+features/          ← pre-extracted activation tensors (all 29 layers, 2 pooling strategies)
+data/              ← processed train/val/test CSVs + raw HuggingFace snapshots
+outputs/           ← saved checkpoints (.pt), metrics (.json), and figures (.png)
 ```
 
-- **`sweep_all_layers.py`** trains a probe on **every** layer folder under `features/qwen2.5-1.5b/` (the full depth curve). Use this instead of calling `train_probe.py` once per layer by hand.
-- **`train_probe.py`** is still needed for **standard result filenames** the notebook expects for the main table (e.g. `qwen2.5-1.5b_layer19_linear.json`), and for one-off layers / MLP. Sweep saves files named `*_layer{N}_linear_sweep.json`; the summary table loads names **without** `_sweep`.
-- You **do not** need only layer 4 — that was a minimal demo. With full features, the sweep **is** the “train on all layers” step.
-
-First-time Hugging Face download is only required if you run **`extract_features.py`** yourself.
+With those in place, jump directly to [Step 3: Train probes](#step-3-train-probes-and-baselines) and [Step 4: Run notebooks](#step-4-run-notebooks).
 
 ---
 
-## What the main scripts do
+## Environment
 
-| Script | Role |
-|--------|------|
-| **`baselines.py`** | **Text-only baseline:** TF‑IDF features + sklearn logistic regression on raw prompts. No LLM. Writes metrics to `outputs/metrics/baseline_tfidf.json`. |
-| **`train_probe.py`** | **Activation probe:** trains a tiny **linear** or **MLP** classifier on vectors loaded from `features/<slug>/layer_<L>/`. Uses frozen LM activations already saved as `.pt` files — it does **not** run the LM. Saves a **checkpoint** under `outputs/checkpoints/` (e.g. `qwen2.5-1.5b_layer19_linear.pt`) with probe weights, train-set mean/std for normalization, and threshold, plus matching **metrics** JSON in `outputs/metrics/`. |
-| **`sweep_all_layers.py`** | Same probe training as `train_probe`, but loops **all** extracted layers and writes sweep plot + `full_sweep_linear.json`. Checkpoints/metrics use a `_sweep` suffix so they do not overwrite single-layer runs. |
-| **`extract_features.py`** | Runs **Qwen2.5-1.5B** once per batch, pools hidden states (last/mean token), saves `X_*.pt` per layer. Heavy; skip if you use shared `features/`. |
-| **`one_class.py`** | Scores test prompts with **Mahalanobis distance** to normal-only training activations (no harmful labels in training). |
-| **`make_imbalance_split.py`** | Builds stratified CSV splits from the raw HF dataset. Skip if you use shared `data/processed/`. |
+Python 3.10+ required. From the repo root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install torch transformers datasets pandas scikit-learn matplotlib tqdm pyarrow
+```
+
+All scripts must be run from the **repo root** (not from `src/`), as imports resolve relative to it.
 
 ---
 
 ## Dataset
 
-### WildGuardMix (source)
+**WildGuardMix** ([`allenai/wildguardmix`](https://huggingface.co/datasets/allenai/wildguardmix)) — a large-scale prompt safety dataset from AI2. Access may require accepting terms on Hugging Face.
 
-This project uses **prompt-level harmfulness** from [**WildGuardMix**](https://huggingface.co/datasets/allenai/wildguardmix) (AI2): a safety dataset with **WildGuardTrain** and **WildGuardTest** splits, prompts (vanilla and adversarial), and labels such as `prompt_harm_label` (`harmful` / `unharmful`). The dataset card includes a **content warning** (high-risk topics for research). Access on Hugging Face may require **logging in and accepting** AI2’s terms.
+The processed splits are available pre-built on Google Drive. To rebuild from scratch:
 
-Load from the Hub (after access is granted):
+```bash
+# 1. Download the raw HuggingFace datasets to disk
+python download_wildguardmix.py
+
+# 2. Build imbalanced train/val/test splits from WildGuardTrain (90:10, 70/10/20)
+python make_imbalance_split.py
+
+# 3. Build the external test set from WildGuardTest
+python process_wildguardtest.py
+```
+
+Outputs land in `data/processed/wildguardmix_imbalance/` (`train.csv`, `val.csv`, `test.csv`, `test_external.csv`).
+
+---
+
+## Step 1: Extract activation features  *(skip if using Drive artifacts)*
+
+Runs Qwen2.5-1.5B (downloaded automatically from Hugging Face on first run, ~3 GB) and saves hidden-state vectors per layer. Use a GPU — extraction takes ~60 min per pooling strategy on a Colab T4, or ~40 min on Apple MPS.
+
+```bash
+# Last-token pooling, all 29 layers (used for main results)
+python src/extract_features.py \
+    --layers $(python -c "print(' '.join(map(str, range(29))))") \
+    --pool last --batch_size 32 --max_length 256
+
+# Mean pooling, all 29 layers (pooling ablation)
+python src/extract_features.py \
+    --layers $(python -c "print(' '.join(map(str, range(29))))") \
+    --pool mean --batch_size 32 --max_length 256 \
+    --out_slug qwen2.5-1.5b-mean
+```
+
+Outputs: `features/<slug>/layer_<n>/{X,y}_{train,val,test,test_external}.pt`
+
+For Colab extraction, see `notebooks/colab_extract.ipynb`.
+
+---
+
+## Step 2: Train probes and baselines
+
+```bash
+# Text baseline (no LLM)
+python src/baselines.py
+
+# Full layer sweep — trains a linear probe on every extracted layer
+python src/sweep_all_layers.py --probe_type linear
+
+# Named probes for the main results table
+python src/train_probe.py --layer 19 --probe_type linear
+python src/train_probe.py --layer 14 --probe_type linear
+python src/train_probe.py --layer 14 --probe_type mlp
+python src/train_probe.py --layer 4  --probe_type linear
+python src/train_probe.py --layer 26 --probe_type linear
+
+# Mean-pool probes (pooling ablation)
+python src/train_probe.py --layer 19 --probe_type linear --model_slug qwen2.5-1.5b-mean
+python src/train_probe.py --layer 15 --probe_type linear --model_slug qwen2.5-1.5b-mean
+
+# One-class Mahalanobis baseline
+python src/one_class.py --layer 14
+
+# Hyperparameter sweep (pos_weight × lr × weight_decay grid)
+python src/hparam_sweep.py --layer 19 --probe_type linear
+```
+
+Checkpoints (`*.pt`) and metrics (`*.json`) are saved to `outputs/checkpoints/` and `outputs/metrics/`.
+
+---
+
+## Step 3: Run notebooks
+
+After training is complete, run notebooks top-to-bottom to reproduce all figures and tables:
+
+| Notebook | Contents |
+|----------|----------|
+| `notebooks/01_eda.ipynb` | Exploratory data analysis (class distribution, prompt length, adversarial breakdown) |
+| `notebooks/02_main_experiment.ipynb` | Main results table, ROC/PR curves, confusion matrices, layer sweep, t-SNE, per-category recall, adversarial subgroup analysis, hyperparameter sweep, extended experiment (v2) |
+| `notebooks/colab_extract.ipynb` | GPU feature extraction on Google Colab (reference only) |
+
+The main experiment notebook **only reads** from `outputs/` — it does not retrain any model.
+
+---
+
+## Reproducing a saved model without retraining
+
+Each checkpoint saved by `train_probe.py` includes the probe weights, normalisation statistics, and decision threshold. To reload and evaluate:
 
 ```python
-from datasets import load_dataset
-train = load_dataset("allenai/wildguardmix", "wildguardtrain", split="train")
-# test  = load_dataset("allenai/wildguardmix", "wildguardtest",  split="train")
+import torch
+from src.train_probe import load_and_evaluate   # or use eval_probe.py
 ```
 
-For `make_imbalance_split.py`, save a disk snapshot (e.g. `save_to_disk`) under `data/raw/wildguardmix/wildguardtrain_hf` or pass `--input_hf_path`. More detail: `WILDGUARDMIX_DATASET_REFERENCE.md`.
-
-### Shared project files (Google Drive)
-
-Teammates can pull pre-built splits / features from:
-
-- [DL Project Dataset](https://drive.google.com/drive/folders/14Yj8SMPvBkft1TrUVPoHSoe5n05mNBwx?usp=sharing)
-
-Place files under `data/` as needed. `data/` is gitignored.
-
-**Processed splits** used by the code default to `data/processed/wildguardmix_imbalance/` (`train.csv`, `val.csv`, `test.csv`). See `make_imbalance_split.py --help`.
-
-## Environment
-
-Use Python 3.10+ and a virtual environment from the project root:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install torch transformers datasets pandas scikit-learn matplotlib tqdm
-```
-
-Adjust the `pip install` line if your platform needs a specific PyTorch wheel (CUDA, CPU-only, or MPS on Apple Silicon).
-
-First run of feature extraction downloads **Qwen/Qwen2.5-1.5B** from Hugging Face (~few GB cache under `~/.cache/huggingface`).
-
-## Pipeline overview
-
-| Step | What it does | Main output |
-|------|----------------|-------------|
-| 1. Splits | Imbalanced train/val/test CSVs | `data/processed/wildguardmix_imbalance/` |
-| 2. Features | LM forward pass, pooled hidden states | `features/<model_slug>/layer_*/` |
-| 3. Probes & baselines | Train/eval lightweight classifiers | `outputs/checkpoints/`, `outputs/metrics/` |
-| 4. Layer sweep (optional) | Train a probe per layer | `outputs/figures/full_layer_sweep_*.png`, metrics |
-| 5. Notebook | Tables + plots from saved files | Reads `outputs/`, writes figures there |
-| 6. Report | PDF from LaTeX | `report/report.pdf` |
-
----
-
-## 1. Build processed splits
-
-From the repo root:
-
-```bash
-python make_imbalance_split.py
-```
-
-Defaults write to `data/processed/wildguardmix_imbalance/` (`train.csv`, `val.csv`, `test.csv`). Override paths and class balance with `--input_hf_path`, `--out_dir`, `--ratio_normal_to_abnormal`, etc. (`python make_imbalance_split.py --help`).
-
----
-
-## 2. Extract activation features
-
-Scripts import `utils` from `src/`; run them with the project root as the working directory:
-
-```bash
-cd "/path/to/DL Project"
-
-# Default: last-token pooling, layers 4, 14, 26 (quick / paper table subset)
-python src/extract_features.py --batch_size 16
-
-# Full 28-layer sweep (Qwen2.5-1.5B uses hidden_states indices 0..27 for transformer layers)
-python src/extract_features.py --pool last --batch_size 16 --layers $(seq 0 27)
-
-# Mean pooling only (e.g. ablation) — use a distinct slug so you do not overwrite defaults
-python src/extract_features.py --pool mean --layers 19 --batch_size 16 --out_slug qwen2.5-1.5b-meanpool
-```
-
-Outputs: `features/<slug>/layer_<n>/X_{train,val,test}.pt` plus `extraction_config.json`.
-
-- Default feature directory slug is `qwen2.5-1.5b` (see `src/utils.py`).
-- **`--pool`:** `last` (default, matches the report) or `mean`.
-
-Inference is heavy; use GPU/MPS when available. Extraction time scales with dataset size and is **not** multiplied by the number of layers in a meaningful way (one forward pass per batch).
-
----
-
-## 3. Train probes and baselines
-
-**If you already extracted features for layers `0..27`:** start with the sweep — it replaces running `train_probe.py` separately for every layer.
-
-```bash
-python src/sweep_all_layers.py --probe_type linear
-```
-
-Auto-detects `features/qwen2.5-1.5b/layer_*`. Writes `outputs/figures/full_layer_sweep_linear.png`, per-layer checkpoints/metrics with a `_sweep` suffix, and `outputs/metrics/full_sweep_linear.json`.
-
-Then train **named** probes for the main table / notebook rows (these file names match `02_main_experiment.ipynb`):
-
-```bash
-python src/baselines.py
-python src/train_probe.py --layer 19 --probe_type linear
-python src/train_probe.py --layer 14 --probe_type mlp
-python src/train_probe.py --layer 4  --probe_type linear   # optional table row
-python src/train_probe.py --layer 14 --probe_type linear
-python src/train_probe.py --layer 26 --probe_type linear
-python src/one_class.py --layer 14
-```
-
-**If you only extracted a few layers** (e.g. default `4 14 26`), use `train_probe.py` per layer instead of the full sweep.
-
-```bash
-# Custom feature directory (e.g. mean pooling):
-python src/train_probe.py --layer 19 --probe_type linear --model_slug qwen2.5-1.5b-meanpool
-```
-
-Checkpoints and JSON metrics land in `outputs/checkpoints/` and `outputs/metrics/`. Common flags: `--pos_weight`, `--epochs`, `--patience` (`python src/train_probe.py --help`).
-
-Optional re-evaluation / figure export for a single probe:
+Or via CLI:
 
 ```bash
 python src/eval_probe.py --layer 19 --probe_type linear
 ```
 
----
-
-## 4. Notebooks vs command line
-
-### `notebooks/02_main_experiment.ipynb`
-
-- **Does:** loads `outputs/metrics/*.json`, builds the results table, and regenerates plots (ROC/PR, confusion, layer sweep chart, t-SNE, etc.) into `outputs/figures/`.
-- **Does not:** run Hugging Face extraction or probe training. Those must be done via the scripts above first; otherwise cells will show `n/a` or fail when files are missing.
-
-The first markdown cell lists an **outdated minimal** CLI (only a few layers). With **all** layers on disk, use **`sweep_all_layers.py`** plus the `train_probe` / `baselines` / `one_class` commands in [§3](#3-train-probes-and-baselines).
-
-### `notebooks/01_eda.ipynb`
-
-Exploratory analysis on the processed CSVs; run after splits exist.
+The checkpoint at `outputs/checkpoints/qwen2.5-1.5b_layer19_linear.pt` is the v1 best model; v2 checkpoints follow the same format under the same directory. All checkpoints are available on Google Drive.
 
 ---
 
-## 5. Compile the report
+## Repository structure
 
-From `report/`:
-
-```bash
-cd report
-latexmk -pdf report.tex
-# or: pdflatex report.tex (run twice if references don’t resolve)
+```
+.
+├── src/
+│   ├── extract_features.py   # LLM forward pass → activation tensors
+│   ├── train_probe.py        # Train linear/MLP probe on saved features
+│   ├── sweep_all_layers.py   # Probe training across all layers
+│   ├── hparam_sweep.py       # Hyperparameter grid search
+│   ├── baselines.py          # TF-IDF + Logistic Regression text baseline
+│   ├── one_class.py          # Mahalanobis one-class anomaly detector
+│   ├── eval_probe.py         # Reload checkpoint and re-evaluate
+│   └── utils.py              # Shared paths, seeds, data loaders
+├── notebooks/
+│   ├── 01_eda.ipynb
+│   ├── 02_main_experiment.ipynb
+│   └── colab_extract.ipynb
+├── make_imbalance_split.py   # Build train/val/test splits
+├── process_wildguardtest.py  # Build external test set from WildGuardTest
+├── download_wildguardmix.py  # Download raw HuggingFace dataset
+├── report/report.pdf         # Final report
+└── requirements.txt
 ```
 
----
-
-## Quick reproduction checklists
-
-**Teammates with Drive `features/` (+ optional `data/processed/`):**
-
-1. Unpack artifacts into repo root; activate venv.
-2. `python src/baselines.py`
-3. `python src/sweep_all_layers.py`
-4. `python src/train_probe.py --layer 19 --probe_type linear` (and other rows from §3 as needed)
-5. `python src/one_class.py --layer 14`
-6. Run `notebooks/02_main_experiment.ipynb`
-
-**From scratch (no shared tensors):**
-
-1. `python make_imbalance_split.py`
-2. `python src/extract_features.py --layers $(seq 0 27)` (or a subset)
-3. Same training steps as above.
-
-The **layer sweep figure** requires all layers extracted **or** restored from Drive under `features/qwen2.5-1.5b/layer_*`.
-
----
-
-## Reproducing figures and visualisations
-
-All figures used in the report are generated by running `notebooks/02_main_experiment.ipynb` from top to bottom after the training scripts have been run. No figure requires re-running feature extraction or probe training — everything is loaded from saved `.pt` checkpoints and `.json` metrics files.
-
-### Training curves (`outputs/figures/training_curves_*.png`)
-
-Generated automatically at the end of each `train_probe.py` run. One PNG per probe configuration, showing train loss, val loss, val PR-AUC, and val accuracy across epochs. To regenerate:
-
-```bash
-python src/train_probe.py --layer 19 --probe_type linear   # → training_curves_qwen2.5-1.5b_layer19_linear.png
-python src/train_probe.py --layer 14 --probe_type linear   # → training_curves_qwen2.5-1.5b_layer14_linear.png
-python src/train_probe.py --layer 14 --probe_type mlp      # → training_curves_qwen2.5-1.5b_layer14_mlp.png
-python src/train_probe.py --layer 26 --probe_type linear   # → training_curves_qwen2.5-1.5b_layer26_linear.png
-python src/train_probe.py --layer 4  --probe_type linear   # → training_curves_qwen2.5-1.5b_layer4_linear.png
-```
-
-These are also displayed in **Section 4b** of `notebooks/02_main_experiment.ipynb`.
-
-### Hyperparameter sweep (`outputs/figures/hparam_sweep_layer19_linear.png`)
-
-Generated by `hparam_sweep.py`. The figure shows the effect of `pos_weight` on val PR-AUC and a scatter of all 12 configurations. To regenerate:
-
-```bash
-python src/hparam_sweep.py --layer 19 --probe_type linear
-```
-
-This also writes `outputs/metrics/hparam_sweep_layer19_linear.json` and `.csv` — the consolidated results table displayed in **Section 4c** of the notebook.
-
-### All other report figures
-
-Generated by `notebooks/02_main_experiment.ipynb`. Run all cells in order after training scripts are complete:
-
-| Figure | Notebook section | Output file |
-|--------|-----------------|-------------|
-| ROC / PR curves | Section 3 | `roc_pr_layer19_linear.png` |
-| Confusion matrix | Section 4 | `confusion_layer19_linear.png` |
-| Failure cases | Section 4d | (printed output, no PNG) |
-| Linear vs MLP ROC | Section 5 | `roc_linear_vs_mlp.png` |
-| Pooling ablation | Section 5b | (inline plot) |
-| Supervised vs one-class ROC | Section 6 | `roc_supervised_vs_oneclass.png` |
-| t-SNE layer 19 | Section 7 | `tsne_layer19.png` |
-| Per-category recall | Section 8 | `subcategory_breakdown.png` |
-| Full layer sweep | Section 2 | `full_layer_sweep_linear.png` |
+`data/`, `features/`, and `outputs/` are gitignored. Download from Google Drive link above.
