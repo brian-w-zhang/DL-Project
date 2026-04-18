@@ -47,13 +47,29 @@ First-time Hugging Face download is only required if you run **`extract_features
 
 ## Dataset
 
-Download assets from Google Drive:
+### WildGuardMix (source)
+
+This project uses **prompt-level harmfulness** from [**WildGuardMix**](https://huggingface.co/datasets/allenai/wildguardmix) (AI2): a safety dataset with **WildGuardTrain** and **WildGuardTest** splits, prompts (vanilla and adversarial), and labels such as `prompt_harm_label` (`harmful` / `unharmful`). The dataset card includes a **content warning** (high-risk topics for research). Access on Hugging Face may require **logging in and accepting** AI2’s terms.
+
+Load from the Hub (after access is granted):
+
+```python
+from datasets import load_dataset
+train = load_dataset("allenai/wildguardmix", "wildguardtrain", split="train")
+# test  = load_dataset("allenai/wildguardmix", "wildguardtest",  split="train")
+```
+
+For `make_imbalance_split.py`, save a disk snapshot (e.g. `save_to_disk`) under `data/raw/wildguardmix/wildguardtrain_hf` or pass `--input_hf_path`. More detail: `WILDGUARDMIX_DATASET_REFERENCE.md`.
+
+### Shared project files (Google Drive)
+
+Teammates can pull pre-built splits / features from:
 
 - [DL Project Dataset](https://drive.google.com/drive/folders/14Yj8SMPvBkft1TrUVPoHSoe5n05mNBwx?usp=sharing)
 
 Place files under `data/` as needed. `data/` is gitignored.
 
-**WildGuardMix-style setup:** scripts expect an on-disk Hugging Face dataset for building splits (default path: `data/raw/wildguardmix/wildguardtrain_hf`). See `make_imbalance_split.py` and `WILDGUARDMIX_DATASET_REFERENCE.md` if you obtain the data elsewhere.
+**Processed splits** used by the code default to `data/processed/wildguardmix_imbalance/` (`train.csv`, `val.csv`, `test.csv`). See `make_imbalance_split.py --help`.
 
 ## Environment
 

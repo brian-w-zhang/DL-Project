@@ -63,18 +63,20 @@ def train_one_layer(
     batch_size: int,
     patience: int,
     seed: int,
+    model_slug: str | None = None,
 ) -> dict:
     set_seed(seed)
     device = torch.device("cpu")
+    slug = model_slug or MODEL_SLUG
 
     # Check features exist
-    feat_dir = PATHS["features"] / MODEL_SLUG / f"layer_{layer}"
+    feat_dir = PATHS["features"] / slug / f"layer_{layer}"
     if not (feat_dir / "X_train.pt").exists():
         return None
 
-    X_train, y_train = load_features(MODEL_SLUG, layer, "train")
-    X_val,   y_val   = load_features(MODEL_SLUG, layer, "val")
-    X_test,  y_test  = load_features(MODEL_SLUG, layer, "test")
+    X_train, y_train = load_features(slug, layer, "train")
+    X_val,   y_val   = load_features(slug, layer, "val")
+    X_test,  y_test  = load_features(slug, layer, "test")
     X_train, X_val, X_test = X_train.float(), X_val.float(), X_test.float()
 
     mean = X_train.mean(dim=0)
@@ -143,14 +145,14 @@ def train_one_layer(
     }
 
     # Save checkpoint
-    ckpt_name = f"{MODEL_SLUG}_layer{layer}_{probe_type}_sweep"
+    ckpt_name = f"{slug}_layer{layer}_{probe_type}_sweep"
     ckpt_path = PATHS["checkpoints"] / f"{ckpt_name}.pt"
     torch.save({
         "probe_state_dict": best_state,
         "probe_type":  probe_type,
         "in_dim":      in_dim,
         "layer":       layer,
-        "model_slug":  MODEL_SLUG,
+        "model_slug":  slug,
         "norm_mean":   mean,
         "norm_std":    std,
         "best_threshold": best_t,
@@ -229,17 +231,22 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--patience", type=int, default=7)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--model_slug", type=str, default=None,
+                        help="Feature slug to load from (default: MODEL_SLUG). "
+                             "Use e.g. qwen2.5-1.5b-meanpool for mean-pool ablation.")
     args = parser.parse_args()
+
+    slug = args.model_slug or MODEL_SLUG
 
     # Auto-detect available layers
     if args.layers is None:
-        base = PATHS["features"] / MODEL_SLUG
+        base = PATHS["features"] / slug
         args.layers = sorted([
             int(p.name.split("_")[1])
             for p in base.iterdir()
             if p.is_dir() and p.name.startswith("layer_")
         ])
-    print(f"Sweeping {len(args.layers)} layers: {args.layers}")
+    print(f"Slug: {slug}  |  Sweeping {len(args.layers)} layers: {args.layers}")
 
     results = []
     for i, layer in enumerate(args.layers):
@@ -253,6 +260,7 @@ def main() -> None:
             batch_size=args.batch_size,
             patience=args.patience,
             seed=args.seed,
+            model_slug=slug,
         )
         if r is None:
             print(f"  Skipped (features not found)")
@@ -262,8 +270,9 @@ def main() -> None:
 
     print(f"\nDone. Best layer by ROC-AUC: {max(results, key=lambda r: r['test_roc_auc'])['layer']}")
 
-    # Save full sweep summary
-    summary_path = PATHS["metrics"] / f"full_sweep_{args.probe_type}.json"
+    # Save full sweep summary — separate file per slug so results don't overwrite
+    slug_suffix = "" if slug == MODEL_SLUG else f"_{slug.replace('/', '-')}"
+    summary_path = PATHS["metrics"] / f"full_sweep_{args.probe_type}{slug_suffix}.json"
     with open(summary_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Summary -> {summary_path}")
