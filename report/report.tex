@@ -415,6 +415,18 @@ across the full operating range on both curves. The PR-AUC advantage ($+0.118$)
 is especially meaningful: under 10\% class prevalence, PR-AUC is a more
 discriminating metric than ROC-AUC.
 
+\subsection{False Positive Rate at High Recall}
+\label{sec:fpr}
+
+While ROC-AUC captures overall performance, industrial safety monitors frequently operate at fixed, highly sensitive recall thresholds. We evaluated the False Positive Rate (FPR) required for each model to catch exactly 95\% of all jailbreaks (True Positive Rate) on the test set:
+\begin{itemize}[noitemsep]
+  \item \textbf{TF-IDF Baseline:} requires an unacceptable $60.56\%$ FPR to reach $95\%$ recall.
+  \item \textbf{Layer 19 Probe:} massively halves this error rate, requiring only a $27.59\%$ FPR to reach $95\%$ recall.
+\end{itemize}
+
+To guarantee $95\%$ safety, the surface-level baseline incorrectly flags more than $60\%$ of all benign, normal user queries as harmful, rendering it practically unusable for deployment. 
+While a $27\%$ FPR remains elevated for strict production environments (a constraint primarily stemming from the small 300-sample harmful training set), the $>2\times$ relative reduction explicitly underscores the superior semantic discrimination of the internal LLM representation compared to lexical baseline matching.
+
 \subsection{Confusion Matrix}
 
 \begin{figure}[H]
@@ -684,6 +696,35 @@ metrics like F1 require careful validation-set tuning.
         A probe trained on synthetic jailbreaks may not generalise equally well to
         novel, unseen attack types.
 \end{enumerate}
+
+\subsection{Efficiency vs. Accuracy Trade-offs}
+\label{sec:efficiency}
+
+While the Layer 19 Activation Probe significantly outperforms the TF-IDF baseline in detecting nuanced and zero-day adversarial attacks, this accuracy gain comes at a computational cost. In an industrial deployment setting where guardrails must be low-latency, efficiency is a substantial constraint.
+
+We empirically measured the per-prompt inference latency on Apple MPS (M-series) architecture:
+\begin{itemize}[noitemsep]
+  \item \textbf{TF-IDF + LogReg Baseline:} $\sim 0.22$ ms per prompt (CPU).
+  \item \textbf{Qwen2.5-1.5B (up to Layer 19):} $\sim 463$ ms per prompt (MPS), with an approximate $2.88$ GB VRAM footprint at \texttt{fp16} precision.
+\end{itemize}
+
+This represents a more than $2000\times$ increase in inference latency. Consequently, the Layer 19 probe is best framed not as a lightweight universal replacement, but rather as a premium \emph{secondary} security layer (e.g., scoring complex or risky queries cascading from a faster, Tier-1 exact-match/TF-IDF filter), or for architectures where detection resilience strictly supersedes millisecond response constraints.
+
+\subsection{Robustness to Prompt Length}
+\label{sec:prompt_length}
+
+Adversarial jailbreaks frequently employ bloat and verbosity (e.g., long role-play scenarios, hypothetical wrappers) to dilute the concentration of explicitly harmful keywords, effectively hiding their malicious intent from surface-level keyword detectors. 
+
+To empirically validate the resilience of the activation probe against such obfuscation, we binned the test-set prompts into length increments and evaluated the recall of both detectors. Figure~\ref{fig:recall_length} illustrates a stark divergence: as the character length of the prompt increases beyond 100 characters, the surface-level TF-IDF baseline suffers a catastrophic degradation in recall. In contrast, the Layer 19 Activation Probe maintains an optimal detection rate uniformly across all prompt lengths.
+
+This explicitly confirms that the Qwen2.5-1.5B internal representations successfully capture deep syntactic and semantic intent rather than superficial token matches, rendering the model organically robust against verbosity-based evasion tactics.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\linewidth]{../outputs/figures/recall_vs_length.png}
+  \caption{Harmful detection recall as a function of prompt character length. The TF-IDF baseline degrades sharply on longer, obfuscated prompts, while the Layer 19 probe maintains robust accuracy, systematically piercing through the verbose wrappers.}
+  \label{fig:recall_length}
+\end{figure}
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Reproducibility}
