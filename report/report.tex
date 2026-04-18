@@ -118,6 +118,9 @@ The main contributions of this project are:
   \item Honest documentation of failure modes and calibration limitations.
 \end{itemize}
 
+\noindent\textbf{Code availability.} All code, notebooks, and scripts are publicly available at
+\url{https://github.com/brian-w-zhang/DL-Project}.
+
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Related Work}
 
@@ -1122,29 +1125,29 @@ present; run cells in order from the top of
          ``NB \S\,X'' = run all cells up to notebook Section X.
          ``Script'' = run the listed \texttt{src/} command.}
 \label{tab:figures}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{p{5.5cm}p{4.5cm}p{5cm}}
+{\small
+\begin{tabular}{p{4.8cm}p{5.8cm}p{3.6cm}}
 \toprule
 \textbf{Figure} & \textbf{Output file} & \textbf{How to regenerate} \\
 \midrule
-Class distribution (EDA) & \texttt{eda\_class\_distribution.png} & \texttt{notebooks/01\_eda.ipynb} \\
-Prompt length by class    & \texttt{eda\_prompt\_length.png}      & \texttt{notebooks/01\_eda.ipynb} \\
-Adversarial breakdown     & \texttt{eda\_adversarial\_breakdown.png} & \texttt{notebooks/01\_eda.ipynb} \\
+Class distribution (EDA)        & \texttt{eda\_class\_distribution.png}          & NB \texttt{01\_eda} \\
+Prompt length by class          & \texttt{eda\_prompt\_length.png}               & NB \texttt{01\_eda} \\
+Adversarial breakdown           & \texttt{eda\_adversarial\_breakdown.png}       & NB \texttt{01\_eda} \\
 \midrule
-Full layer sweep (last-token)  & \texttt{full\_layer\_sweep\_linear.png} & NB \S\,2 \\
-Layer sweep pooling comparison & \texttt{layer\_sweep\_pooling\_comparison.png} & NB \S\,2b \\
-ROC / PR curves comparison    & \texttt{roc\_pr\_pooling\_comparison.png} & NB \S\,3 \\
-Confusion matrices (side-by-side) & \texttt{confusion\_pooling\_comparison.png} & NB \S\,4 \\
-Training curves (L19 linear)  & \texttt{training\_curves\_qwen2.5-1.5b\_layer19\_linear.png} & \texttt{train\_probe.py -{}-layer 19} \\
-Hyperparameter sweep          & \texttt{hparam\_sweep\_layer19\_linear.png} & \texttt{hparam\_sweep.py -{}-layer 19} \\
-Linear vs MLP (all configs)   & \texttt{roc\_all\_configs.png}            & NB \S\,5 \\
-Supervised vs one-class ROC   & \texttt{roc\_supervised\_vs\_oneclass.png} & NB \S\,6 \\
-t-SNE (pooling comparison)    & \texttt{tsne\_pooling\_comparison.png}     & NB \S\,7 \\
-Per-category recall           & \texttt{subcategory\_breakdown.png}        & NB \S\,8 \\
-Adversarial subgroup recall   & \texttt{subgroup\_adversarial\_recall.png} & NB \S\,8b \\
+Full layer sweep (last-token)   & \texttt{full\_layer\_sweep\_linear.png}        & NB \S\,2 \\
+Layer sweep pooling comparison  & \texttt{layer\_sweep\_pooling\_comparison.png} & NB \S\,2b \\
+ROC / PR curves comparison      & \texttt{roc\_pr\_pooling\_comparison.png}      & NB \S\,3 \\
+Confusion matrices              & \texttt{confusion\_pooling\_comparison.png}    & NB \S\,4 \\
+Training curves (L19 linear)    & \texttt{training\_curves\_qwen2.5-1.5b}        & \texttt{train\_probe.py} \\
+                                & \texttt{\_layer19\_linear.png}                 & \texttt{-{}-layer 19} \\
+Hyperparameter sweep            & \texttt{hparam\_sweep\_layer19\_linear.png}    & \texttt{hparam\_sweep.py} \\
+Linear vs MLP (all configs)     & \texttt{roc\_all\_configs.png}                 & NB \S\,5 \\
+Supervised vs one-class ROC     & \texttt{roc\_supervised\_vs\_oneclass.png}     & NB \S\,6 \\
+t-SNE (pooling comparison)      & \texttt{tsne\_pooling\_comparison.png}         & NB \S\,7 \\
+Per-category recall             & \texttt{subcategory\_breakdown.png}            & NB \S\,8 \\
+Adversarial subgroup recall     & \texttt{subgroup\_adversarial\_recall.png}     & NB \S\,8b \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}}
 \end{table}
 
 % ── 8.7 Saved Artifacts ───────────────────────────────────────────────────────
@@ -1192,18 +1195,20 @@ never seen during training or threshold tuning.
 \centering
 \caption{v1 vs v2 dataset configuration.}
 \label{tab:v1v2}
-\begin{tabular}{lll}
+{\small
+\begin{tabular}{p{4.0cm}p{4.5cm}p{5.5cm}}
 \toprule
- & v1 (original) & v2 (extended) \\
+ & \textbf{v1 (original)} & \textbf{v2 (extended)} \\
 \midrule
 Harmful train examples  & 300   & 700 \\
 Total train             & 3,000 & 7,000 \\
-Internal test (harmful) & 600 (60)   & 2,000 (200) \\
+Internal test (harmful) & 600 total (60 harmful)   & 2,000 total (200 harmful) \\
 External test           & ---   & WildGuardTest: 1,699 rows (754 harmful) \\
 Split design            & 90:10 imbalance & 70/10/20 train/val/test, 90:10 imbalance \\
-Extraction hardware     & Apple MPS ($\sim$40 min/method, $\sim$80 min total) & Colab T4 GPU ($\sim$60 min/method, $\sim$120 min total) \\
+Extraction hardware     & Apple MPS & Colab T4 GPU \\
+Extraction time         & $\sim$40 min/method ($\sim$80 min total) & $\sim$60 min/method ($\sim$120 min total) \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 All other settings (Qwen2.5-1.5B frozen, linear probe, AdamW, $w_+=3.0$,
