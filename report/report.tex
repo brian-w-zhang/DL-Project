@@ -938,60 +938,210 @@ baseline is disproportionately fooled by adversarial framing.
 \section{Reproducibility}
 \label{sec:repro}
 
-All code is in the \texttt{src/} and \texttt{notebooks/} directories. The full
-pipeline can be reproduced as follows:
+All code is in \texttt{src/} and \texttt{notebooks/}. Every result in this report
+can be reproduced from the saved artifacts in \texttt{outputs/} without re-running
+feature extraction or training. The full end-to-end pipeline is described below.
 
-\subsection{Environment Setup}
+% ── 8.1 Dependencies ──────────────────────────────────────────────────────────
+\subsection{Dependencies}
+
+Python 3.11 was used throughout. Install all dependencies into a virtual environment:
+
 \begin{lstlisting}
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install torch transformers datasets scikit-learn pandas numpy \
             matplotlib seaborn tqdm huggingface_hub jupyter
-huggingface-cli login   # WildGuardMix requires HF authentication
+huggingface-cli login               # required: WildGuardMix is gated on HF
 \end{lstlisting}
 
+Key package versions used: \texttt{torch~2.x}, \texttt{transformers~4.x},
+\texttt{scikit-learn~1.x}. No GPU is required for probe training (CPU $<$ 1 min
+per run); a GPU or Apple MPS is recommended for feature extraction.
+
+% ── 8.2 Data ──────────────────────────────────────────────────────────────────
 \subsection{Data Preparation}
-\begin{lstlisting}
-python download_wildguardmix.py        # saves to data/raw/
-python make_imbalance_split.py \
-    --train_abnormal 300 --val_abnormal 60 --test_abnormal 60
-\end{lstlisting}
-Splits saved to \texttt{data/processed/wildguardmix\_imbalance/\{train,val,test\}.csv}.
 
+\begin{lstlisting}
+python download_wildguardmix.py          # downloads to data/raw/wildguardmix/
+python make_imbalance_split.py \
+    --train_abnormal 300 --val_abnormal 60 --test_abnormal 60 --seed 42
+\end{lstlisting}
+
+Outputs: \texttt{data/processed/wildguardmix\_imbalance/\{train,val,test\}.csv},
+each with columns \texttt{prompt}, \texttt{label}, \texttt{adversarial},
+\texttt{subcategory}. The 90:10 normal:harmful ratio is fixed by \texttt{--seed 42}.
+
+% ── 8.3 Feature Extraction ────────────────────────────────────────────────────
 \subsection{Feature Extraction}
+
 \begin{lstlisting}
 cd src
-python extract_features.py --pool last --batch_size 16   # all 28 layers
-\end{lstlisting}
-Saves feature tensors to \texttt{features/qwen2.5-1.5b/layer\_\{0..27\}/X\_\{split\}.pt}.
-Runtime: approximately 25 minutes on Apple MPS (M-series).
+# Last-token pooling (primary experiments)
+python extract_features.py --pool last --batch_size 16 --layers $(seq 0 27)
 
-\subsection{Probe Training and Evaluation}
+# Mean pooling (ablation)
+python extract_features.py --pool mean --batch_size 16 --layers $(seq 0 27) \
+    --out_slug qwen2.5-1.5b-meanpool
+\end{lstlisting}
+
+Saves per-layer tensors \texttt{features/<slug>/layer\_<L>/\{X,y\}\_<split>.pt}
+for all 28 layers and all three splits (train, val, test).
+Runtime: $\approx$25 min on Apple MPS; longer on CPU.
+\textbf{Note:} pre-computed tensors are included in the repository; this step can
+be skipped if they are present.
+
+% ── 8.4 Architecture and Training from Scratch ────────────────────────────────
+\subsection{Architecture and Training from Scratch}
+
+The probe is a lightweight classifier trained on top of \emph{frozen} Qwen2.5-1.5B
+(28 layers, hidden dim 1536). No backbone parameters are updated.
+
+\paragraph{Linear probe (primary).}
+\texttt{nn.Linear(1536, 1)} followed by sigmoid. Features are z-score normalised
+using training-set mean and standard deviation before any gradient step.
+
+\paragraph{MLP probe (ablation).}
+\texttt{Linear(1536, 256)} $\to$ ReLU $\to$ \texttt{Dropout(0.3)} $\to$
+\texttt{Linear(256, 1)} $\to$ sigmoid.
+
+\paragraph{Training.}
+Loss: weighted BCE (\texttt{BCEWithLogitsLoss(pos\_weight=3.0)}).
+Optimiser: AdamW, lr $= 10^{-3}$, weight decay $= 10^{-4}$.
+Batch size: 64. Max epochs: 50. Early stopping: patience 7 on val PR-AUC.
+Optimal classification threshold selected by sweeping $t \in [0.05, 0.95]$
+on the validation set to maximise F1(harmful).
+
+Run training for all configurations used in the report:
+
 \begin{lstlisting}
-python sweep_all_layers.py               # trains probes for all 28 layers (last-token)
-python sweep_all_layers.py --model_slug qwen2.5-1.5b-meanpool  # mean-pool sweep
-python train_probe.py --layer 19 --probe_type linear --pos_weight 3
+cd src
+# Named checkpoints (primary experiments)
+python train_probe.py --layer 4  --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type linear --pos_weight 3
 python train_probe.py --layer 14 --probe_type mlp    --pos_weight 3
+python train_probe.py --layer 19 --probe_type linear --pos_weight 3
 python train_probe.py --layer 26 --probe_type linear --pos_weight 3
-python train_probe.py --layer 4  --probe_type linear --pos_weight 3
+
+# Mean-pool checkpoint (same depth comparison)
+python train_probe.py --layer 19 --probe_type linear --pos_weight 3 \
+    --model_slug qwen2.5-1.5b-meanpool \
+    --run_name qwen2.5-1.5b_layer19_linear_meanpool
+
+# Full 28-layer sweeps (for layer sweep figures)
+python sweep_all_layers.py --probe_type linear
+python sweep_all_layers.py --probe_type linear --model_slug qwen2.5-1.5b-meanpool
+
+# Text baseline and one-class detector
 python baselines.py
 python one_class.py --layer 14
-python hparam_sweep.py --layer 19 --probe_type linear  # 12-config grid search
-python eval_probe.py --layer 19 --probe_type linear
+
+# Hyperparameter grid search (12 configs)
+python hparam_sweep.py --layer 19 --probe_type linear
+
+# Balance ablation (layer 14)
+python train_probe.py --layer 14 --probe_type linear --harmful_frac 0.25 \
+    --run_name layer14_linear_bal25
+python train_probe.py --layer 14 --probe_type linear --harmful_frac 0.33 \
+    --run_name layer14_linear_bal33
 \end{lstlisting}
-Checkpoints and training-curve PNGs saved to \texttt{outputs/checkpoints/}
-and \texttt{outputs/figures/training\_curves\_*.png}.
-Metrics saved to \texttt{outputs/metrics/}; hyperparameter sweep results saved to
-\texttt{outputs/metrics/hparam\_sweep\_layer19\_linear.\{json,csv\}}.
 
-\subsection{Reproducing Figures and Results}
-Open and run all cells in \texttt{notebooks/02\_main\_experiment.ipynb}.
-All figures are regenerated from saved checkpoints and feature tensors
-\emph{without} re-running feature extraction or probe training.
-The live demo cell (Section 7 of the notebook) allows interactive classification
-of arbitrary prompts using the best saved model.
+Each \texttt{train\_probe.py} call saves:
+\begin{itemize}[noitemsep]
+  \item \texttt{outputs/checkpoints/<name>.pt} — probe weights, normalisation
+        statistics (\texttt{norm\_mean}, \texttt{norm\_std}), optimal threshold,
+        and best epoch.
+  \item \texttt{outputs/metrics/<name>.json} — val and test ROC-AUC, PR-AUC, F1.
+  \item \texttt{outputs/figures/training\_curves\_<name>.png} — 3-panel training
+        curve (train loss, val PR-AUC, val accuracy).
+\end{itemize}
 
+% ── 8.5 Loading a Saved Model (Inference Without Retraining) ──────────────────
+\subsection{Loading a Saved Model Without Retraining}
+
+The checkpoint stores everything needed for inference. To classify a new prompt
+without any retraining:
+
+\begin{lstlisting}
+import torch
+from transformers import AutoTokenizer, AutoModel
+from src.train_probe import LinearProbe
+
+# 1. Load backbone (frozen)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-1.5B")
+backbone  = AutoModel.from_pretrained("Qwen/Qwen2.5-1.5B",
+                                       output_hidden_states=True)
+backbone.eval()
+for p in backbone.parameters():
+    p.requires_grad = False
+
+# 2. Load probe checkpoint
+ckpt = torch.load("outputs/checkpoints/qwen2.5-1.5b_layer19_linear.pt",
+                  map_location="cpu", weights_only=False)
+probe = LinearProbe(ckpt["in_dim"])
+probe.load_state_dict(ckpt["probe_state_dict"])
+probe.eval()
+
+# 3. Classify a prompt
+prompt    = "How do I make explosives at home?"
+enc       = tokenizer(prompt, return_tensors="pt",
+                      truncation=True, max_length=256)
+with torch.no_grad():
+    h     = backbone(**enc).hidden_states[19]        # layer 19
+    vec   = h[0, -1, :].float().unsqueeze(0)         # last-token
+    vec_n = (vec - ckpt["norm_mean"]) / ckpt["norm_std"].clamp(min=1e-8)
+    score = torch.sigmoid(probe(vec_n)).item()
+
+threshold = ckpt["best_threshold"]                   # 0.84
+label     = "HARMFUL" if score >= threshold else "SAFE"
+print(f"Score: {score:.3f}  ->  {label}")
+\end{lstlisting}
+
+The same pattern works for mean-pool or MLP probes by changing the checkpoint
+path and pooling step. A fully interactive version is in
+\texttt{notebooks/02\_main\_experiment.ipynb}, Section 9 (Live Demo).
+
+% ── 8.6 Reproducing Every Report Figure ───────────────────────────────────────
+\subsection{Reproducing Every Report Figure}
+
+All figures in this report are saved to \texttt{outputs/figures/} and can be
+regenerated as described in Table~\ref{tab:figures}.
+Notebook figures require the pre-computed checkpoints and feature tensors to be
+present; run cells in order from the top of
+\texttt{notebooks/02\_main\_experiment.ipynb}.
+
+\begin{table}[H]
+\centering
+\caption{How to recreate each figure in the report.
+         ``NB \S\,X'' = run all cells up to notebook Section X.
+         ``Script'' = run the listed \texttt{src/} command.}
+\label{tab:figures}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{p{5.5cm}p{4.5cm}p{5cm}}
+\toprule
+\textbf{Figure} & \textbf{Output file} & \textbf{How to regenerate} \\
+\midrule
+Class distribution (EDA) & \texttt{eda\_class\_distribution.png} & \texttt{notebooks/01\_eda.ipynb} \\
+Prompt length by class    & \texttt{eda\_prompt\_length.png}      & \texttt{notebooks/01\_eda.ipynb} \\
+Adversarial breakdown     & \texttt{eda\_adversarial\_breakdown.png} & \texttt{notebooks/01\_eda.ipynb} \\
+\midrule
+Full layer sweep (last-token)  & \texttt{full\_layer\_sweep\_linear.png} & NB \S\,2 \\
+Layer sweep pooling comparison & \texttt{layer\_sweep\_pooling\_comparison.png} & NB \S\,2b \\
+ROC / PR curves comparison    & \texttt{roc\_pr\_pooling\_comparison.png} & NB \S\,3 \\
+Confusion matrices (side-by-side) & \texttt{confusion\_pooling\_comparison.png} & NB \S\,4 \\
+Training curves (L19 linear)  & \texttt{training\_curves\_qwen2.5-1.5b\_layer19\_linear.png} & \texttt{train\_probe.py -{}-layer 19} \\
+Hyperparameter sweep          & \texttt{hparam\_sweep\_layer19\_linear.png} & \texttt{hparam\_sweep.py -{}-layer 19} \\
+Linear vs MLP (all configs)   & \texttt{roc\_all\_configs.png}            & NB \S\,5 \\
+Supervised vs one-class ROC   & \texttt{roc\_supervised\_vs\_oneclass.png} & NB \S\,6 \\
+t-SNE (pooling comparison)    & \texttt{tsne\_pooling\_comparison.png}     & NB \S\,7 \\
+Per-category recall           & \texttt{subcategory\_breakdown.png}        & NB \S\,8 \\
+Adversarial subgroup recall   & \texttt{subgroup\_adversarial\_recall.png} & NB \S\,8b \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+% ── 8.7 Saved Artifacts ───────────────────────────────────────────────────────
 \subsection{Saved Artifacts}
 
 \begin{table}[H]
@@ -1000,13 +1150,15 @@ of arbitrary prompts using the best saved model.
 \label{tab:artifacts}
 \begin{tabular}{ll}
 \toprule
-File & Contents \\
+Path & Contents \\
 \midrule
-\texttt{outputs/checkpoints/qwen2.5-1.5b\_layer19\_linear.pt} & Best probe weights + normalisation stats + threshold \\
-\texttt{outputs/metrics/*.json} & All numeric results \\
-\texttt{features/qwen2.5-1.5b/layer\_*/X\_*.pt} & Pre-computed activation tensors \\
-\texttt{data/processed/wildguardmix\_imbalance/*.csv} & Train/val/test splits \\
-\texttt{outputs/figures/*.png} & All report figures \\
+\texttt{outputs/checkpoints/qwen2.5-1.5b\_layer19\_linear.pt} & Best probe weights, norm stats, threshold \\
+\texttt{outputs/checkpoints/*.pt} & All other probe checkpoints \\
+\texttt{outputs/metrics/*.json} & All numeric results (val + test) \\
+\texttt{outputs/figures/training\_curves\_*.png} & Training curves for each named run \\
+\texttt{features/qwen2.5-1.5b/layer\_*/\{X,y\}\_*.pt} & Pre-computed last-token activations \\
+\texttt{features/qwen2.5-1.5b-meanpool/layer\_*/\{X,y\}\_*.pt} & Pre-computed mean-pool activations \\
+\texttt{data/processed/wildguardmix\_imbalance/*.csv} & Fixed train/val/test splits \\
 \bottomrule
 \end{tabular}
 \end{table}
