@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -26,6 +27,8 @@ from utils import (
     save_metrics,
     set_seed,
 )
+
+plt.rcParams.update({"figure.dpi": 150, "font.size": 11})
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +78,74 @@ def resample_balanced(X: torch.Tensor, y: torch.Tensor, harmful_frac: float, see
     return X[idx], y[idx]
 
 
+def plot_training_curves(
+    train_losses: list[float],
+    val_losses: list[float],
+    val_praucs: list[float],
+    val_accs: list[float],
+    best_epoch: int,
+    layer: int,
+    probe_type: str,
+    run_name: str,
+) -> None:
+    """
+    Plot and save a 3-panel training curve figure:
+      Panel 1 — Train loss vs Val loss  (overfitting diagnostic)
+      Panel 2 — Val PR-AUC             (early stopping criterion)
+      Panel 3 — Val accuracy           (human-readable performance)
+    """
+    epochs = list(range(1, len(train_losses) + 1))
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # --- Panel 1: Train loss vs Val loss ---
+    # Both curves on the same axes so divergence (overfitting) is immediately visible.
+    # If val loss rises while train loss falls, the model is memorising the training set.
+    axes[0].plot(epochs, train_losses, color="#4C72B0", lw=2, label="Train loss")
+    axes[0].plot(epochs, val_losses,   color="#DD8452", lw=2, label="Val loss", linestyle="--")
+    axes[0].axvline(best_epoch, color="gray", linestyle=":", lw=1.5,
+                    label=f"Best epoch ({best_epoch})")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("BCE Loss")
+    axes[0].set_title(f"Train vs Validation Loss\n(Layer {layer}, {probe_type})")
+    axes[0].legend()
+    axes[0].grid(alpha=0.3)
+
+    # --- Panel 2: Val PR-AUC ---
+    # This is the metric used for early stopping. Shows when the model stops improving
+    # on the imbalanced validation set.
+    axes[1].plot(epochs, val_praucs, color="#DD8452", lw=2, label="Val PR-AUC")
+    axes[1].axvline(best_epoch, color="gray", linestyle=":", lw=1.5,
+                    label=f"Best epoch ({best_epoch})")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("PR-AUC")
+    axes[1].set_title(f"Validation PR-AUC\n(Layer {layer}, {probe_type})")
+    axes[1].legend()
+    axes[1].grid(alpha=0.3)
+
+    # --- Panel 3: Val accuracy ---
+    axes[2].plot(epochs, val_accs, color="#55A868", lw=2, label="Val accuracy")
+    axes[2].axvline(best_epoch, color="gray", linestyle=":", lw=1.5,
+                    label=f"Best epoch ({best_epoch})")
+    axes[2].set_xlabel("Epoch")
+    axes[2].set_ylabel("Accuracy")
+    axes[2].set_title(f"Validation Accuracy\n(Layer {layer}, {probe_type})")
+    axes[2].legend()
+    axes[2].grid(alpha=0.3)
+
+    plt.suptitle(
+        f"Training Curves — {probe_type.upper()} probe, Layer {layer}",
+        fontsize=13
+    )
+    plt.tight_layout()
+
+    out = PATHS["figures"] / f"training_curves_{run_name}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out, bbox_inches="tight")
+    plt.close()
+    print(f"Training curves saved -> {out}")
+
+
 def train(
     layer: int,
     probe_type: str,
@@ -88,9 +159,10 @@ def train(
     harmful_frac: float | None,
     run_name: str | None,
     model_slug: str | None = None,
-) -> None:
+    save_curves: bool = True,
+) -> dict:
     set_seed(seed)
-    device = torch.device("cpu")  # probes are tiny, CPU is fine
+    device = torch.device("cpu")
 
     slug = model_slug or MODEL_SLUG
     X_train, y_train = load_features(slug, layer, "train")
@@ -130,8 +202,17 @@ def train(
     patience_counter = 0
     best_state = None
 
+    # --- History tracking ---
+    train_losses: list[float] = []
+    val_losses: list[float] = []      # validation loss — overfitting diagnostic
+    val_praucs: list[float] = []
+    val_accs: list[float] = []
+
     for epoch in range(1, epochs + 1):
+        # Training pass
         probe.train()
+        epoch_loss = 0.0
+        n_batches = 0
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
@@ -139,13 +220,26 @@ def train(
             loss = criterion(logits, yb)
             loss.backward()
             optimizer.step()
+            epoch_loss += loss.item()
+            n_batches += 1
+        avg_train_loss = epoch_loss / max(n_batches, 1)
+        train_losses.append(avg_train_loss)
 
-        # Validation
+        # Validation pass — compute both loss and metrics
         probe.eval()
         with torch.no_grad():
             val_logits = probe(X_val.to(device)).cpu()
+            # Validation loss uses the same criterion as training so the two curves
+            # are directly comparable on the same scale.
+            val_loss = criterion(val_logits, y_val).item()
             val_scores = torch.sigmoid(val_logits).numpy()
+            val_preds = (val_scores >= 0.5).astype(int)
+
         val_prauc = average_precision_score(y_val.numpy(), val_scores)
+        val_acc = float((val_preds == y_val.numpy()).mean())
+        val_losses.append(val_loss)
+        val_praucs.append(val_prauc)
+        val_accs.append(val_acc)
 
         if val_prauc > best_val_prauc:
             best_val_prauc = val_prauc
@@ -156,7 +250,9 @@ def train(
             patience_counter += 1
 
         if epoch % 5 == 0 or epoch == 1:
-            print(f"  Epoch {epoch:3d} | val PR-AUC: {val_prauc:.4f} (best: {best_val_prauc:.4f})")
+            print(f"  Epoch {epoch:3d} | train loss: {avg_train_loss:.4f} | "
+                  f"val loss: {val_loss:.4f} | val PR-AUC: {val_prauc:.4f} | "
+                  f"val acc: {val_acc:.4f} (best PR-AUC: {best_val_prauc:.4f})")
 
         if patience_counter >= patience:
             print(f"  Early stopping at epoch {epoch} (best epoch {best_epoch})")
@@ -231,6 +327,21 @@ def train(
     }
     save_metrics(metrics, ckpt_name)
 
+    # Plot and save training curves
+    if save_curves:
+        plot_training_curves(
+            train_losses=train_losses,
+            val_losses=val_losses,
+            val_praucs=val_praucs,
+            val_accs=val_accs,
+            best_epoch=best_epoch,
+            layer=layer,
+            probe_type=probe_type,
+            run_name=ckpt_name,
+        )
+
+    return metrics
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -248,8 +359,7 @@ def main() -> None:
     parser.add_argument("--run_name", type=str, default=None,
                         help="Custom name for checkpoint/metrics files (default: auto)")
     parser.add_argument("--model_slug", type=str, default=None,
-                        help="Override feature slug (default: MODEL_SLUG from utils). "
-                             "Use to load from e.g. qwen2.5-1.5b-meanpool.")
+                        help="Override feature slug (default: MODEL_SLUG from utils).")
     args = parser.parse_args()
 
     print(f"Training {args.probe_type} probe on layer {args.layer} features...")
