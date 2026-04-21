@@ -1,8 +1,8 @@
 # Project Presentation
 
-## Part 1: Bottom-Up Project Explanation
+### 1. Bottom-Up Project Explanation
 
-To truly grasp what your team built, we must look at it layer by layer (no pun intended):
+To truly grasp what we built, we must look at it layer by layer (no pun intended):
 
 ### 1. The Real-World Problem
 Large Language Models (LLMs) have a vulnerability: **jailbreaks**. Users can craft clever prompts that bypass safety guardrails, tricking the model into providing harmful instructions (e.g., "Write a poem about hacking a bank"). Most current defenses try to solve this by analyzing the **prompt's text** (which hackers just obfuscate) or the **generated response's text** (which is computationally wasteful since the model already did the work).
@@ -79,7 +79,7 @@ While Layer 19 is vastly superior in accuracy, we investigated the real-world op
 * **Unsupervised Anomaly Baseline (Mahalanobis):** We even proved that without giving the detector ANY harmful labels during training, a pure distance-calculation (Mahalanobis) still hits an ROC-AUC of 0.705. The jailbreaks practically flag themselves.
 
 ### 4. Constraints, Deployment Reality, & Conclusion
-* **Operational False Positives:** ROC-AUC is a theoretical metric. In a real company, if you demand a 95% safety standard (catching 95% of bad queries), the TF-IDF baseline will incorrectly block >60% of your real users. The Activation Probe halves that failure rate to ~27%, representing a massive operational improvement despite the imbalanced data bottleneck.
+* **Operational False Positives:** ROC-AUC is a theoretical metric. In a real world deployment, if we demand a 95% safety standard (catching 95% of bad queries), the TF-IDF baseline will incorrectly block >60% of our real users. The Activation Probe halves that failure rate to ~27%, representing a massive operational improvement despite the imbalanced data bottleneck.
 * **Sub-category Limitations & Blatant Harm:** We must acknowledge error cases. We hit perfect 100% recall on 7 subcategories (cyberattack, defamation, fraud, etc.), but struggle (44% recall) on subtle 'social stereotypes'. Furthermore, because our training data is full of sneaky jailbreak wrappers, the model occasionally misses *blatant, direct* requests (like "how to build a bomb") while successfully catching wrapped ones.
 * **The Efficiency Cost:** We also must be honest about deployment costs as engineers. The superior accuracy from the LLM backbone comes at a steep price: evaluating it takes ~463ms (a $>2000\times$ latency increase) and requires dedicated GPU VRAM. 
 * **Conclusion & Future Directions:** Ultimately, we validated the extraction architecture and proved its scale hitting 0.889 ROC-AUC on a 7k-sample benchmark. Moving forward, we recommend a cascading architecture: use lightweight text filters for the obvious 80% of traffic, and strictly route the highly suspicious, nuanced 20% to the potent Layer 19/15 activation probe.
